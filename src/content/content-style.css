@@ -1,0 +1,65 @@
+/* All rules are namespaced so translated content can be removed cleanly. */
+.deeptranslate-translation {
+  unicode-bidi: plaintext !important;
+}
+
+/* The decorated card is only used for the optional bilingual comparison.
+   Translation-only mode receives no extension chrome at all. */
+.deeptranslate-translation:not(.deerwebtranslator-translation-replacement) {
+  display: block !important;
+  box-sizing: border-box !important;
+  margin: 0.45em 0 0.9em !important;
+  padding: 0.55em 0.8em !important;
+  border-left: 3px solid #4f46e5 !important;
+  border-radius: 0 0.45em 0.45em 0 !important;
+  color: #26324a !important;
+  background: #eef2ff !important;
+  font-family: inherit !important;
+  font-size: 0.94em !important;
+  font-weight: 400 !important;
+  line-height: 1.65 !important;
+  letter-spacing: normal !important;
+  text-align: start !important;
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere !important;
+}
+
+li.deeptranslate-translation:not(.deerwebtranslator-translation-replacement) {
+  display: block !important;
+  list-style: none !important;
+}
+
+.deeptranslate-translation.deerwebtranslator-translation-hidden {
+  display: none !important;
+}
+
+.deerwebtranslator-original-hidden {
+  display: none !important;
+}
+
+/* A table-cell translation is placed inside the valid td/th container. Hide
+   only the original cell contents while keeping the translation visible. */
+.deerwebtranslator-cell-original-hidden {
+  color: transparent !important;
+}
+
+.deerwebtranslator-cell-original-hidden > :not(.deeptranslate-translation) {
+  visibility: hidden !important;
+}
+
+.deerwebtranslator-cell-original-hidden > .deeptranslate-translation {
+  visibility: visible !important;
+  color: #26324a !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  .deeptranslate-translation:not(.deerwebtranslator-translation-replacement) {
+    border-left-color: #818cf8 !important;
+    color: #e5e7eb !important;
+    background: #20243a !important;
+  }
+
+  .deerwebtranslator-cell-original-hidden > .deeptranslate-translation {
+    color: #e5e7eb !important;
+  }
+}

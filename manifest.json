@@ -1,0 +1,66 @@
+{
+  "manifest_version": 3,
+  "name": "DeerWebTranslator",
+  "version": "1.0.0",
+  "description": "像 Chrome 原生翻译一样快速，为网页提供 AI 双语阅读，支持多种模型与 API。",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://api.deepseek.com/*",
+    "https://api.openai.com/*",
+    "https://openrouter.ai/*",
+    "https://api.anthropic.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.moonshot.cn/*",
+    "https://api.siliconflow.cn/*",
+    "http://localhost:11434/*",
+    "http://127.0.0.1:11434/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js"
+  },
+  "action": {
+    "default_title": "DeerWebTranslator",
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "options_ui": {
+    "page": "src/options/options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/shared/constants.js",
+        "src/shared/dom-codec.js",
+        "src/content/content-script.js"
+      ],
+      "css": [
+        "src/content/content-style.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ]
+}

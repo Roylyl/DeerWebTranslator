@@ -1,0 +1,270 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f8fafc;
+  color: #172033;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 340px;
+  margin: 0;
+  background: #f8fafc;
+}
+
+button {
+  font: inherit;
+}
+
+.popup-shell {
+  padding: 18px;
+}
+
+.popup-header,
+.status-row,
+.section-heading,
+.popup-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.popup-header {
+  justify-content: flex-start;
+  margin-bottom: 16px;
+}
+
+.brand-mark {
+  display: grid;
+  overflow: hidden;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  font-size: 20px;
+  font-weight: 700;
+  box-shadow: 0 7px 18px rgb(79 70 229 / 25%);
+}
+
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+h2 {
+  font-size: 13px;
+}
+
+.muted,
+.detail-label {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.status-card {
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgb(15 23 42 / 5%);
+}
+
+.status-row {
+  margin-bottom: 10px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.progress-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.progress-bar {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #4f46e5, #8b5cf6);
+  transition: width 180ms ease;
+}
+
+.detail-label {
+  margin-top: 10px;
+  line-height: 1.45;
+}
+
+.primary-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin: 14px 0 18px;
+}
+
+.button,
+.mode-button,
+.link-button {
+  border: 0;
+  cursor: pointer;
+  transition: opacity 140ms ease, background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.button:active,
+.mode-button:active,
+.link-button:active {
+  transform: translateY(1px);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.button {
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.button-primary {
+  color: #fff;
+  background: #4f46e5;
+}
+
+.button-primary:hover:not(:disabled) {
+  background: #4338ca;
+}
+
+.button-secondary {
+  color: #334155;
+  background: #e2e8f0;
+}
+
+.button-secondary:hover:not(:disabled) {
+  background: #cbd5e1;
+}
+
+.section-heading {
+  margin-bottom: 8px;
+}
+
+.mode-switch {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px;
+  border-radius: 11px;
+  background: #e2e8f0;
+}
+
+.mode-button {
+  min-height: 30px;
+  border-radius: 8px;
+  color: #64748b;
+  background: transparent;
+  font-size: 12px;
+}
+
+.mode-button.active {
+  color: #312e81;
+  background: #fff;
+  box-shadow: 0 2px 5px rgb(15 23 42 / 12%);
+  font-weight: 650;
+}
+
+.error-label {
+  margin-top: 14px;
+  padding: 10px 11px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  color: #b91c1c;
+  background: #fef2f2;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.popup-footer {
+  margin-top: 18px;
+  padding-top: 13px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.link-button {
+  padding: 3px 0;
+  color: #4f46e5;
+  background: transparent;
+  font-size: 12px;
+}
+
+.link-button:hover {
+  color: #3730a3;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root,
+  body {
+    background: #0f172a;
+    color: #e2e8f0;
+  }
+
+  .status-card {
+    border-color: #273449;
+    background: #172033;
+  }
+
+  .status-row {
+    color: #e2e8f0;
+  }
+
+  .progress-track,
+  .mode-switch {
+    background: #273449;
+  }
+
+  .button-secondary {
+    color: #e2e8f0;
+    background: #273449;
+  }
+
+  .button-secondary:hover:not(:disabled) {
+    background: #334155;
+  }
+
+  .mode-button.active {
+    color: #c7d2fe;
+    background: #334155;
+  }
+
+  .popup-footer {
+    border-top-color: #273449;
+  }
+
+  .error-label {
+    border-color: #7f1d1d;
+    color: #fecaca;
+    background: #351a1a;
+  }
+}

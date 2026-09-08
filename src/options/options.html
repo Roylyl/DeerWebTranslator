@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DeerWebTranslator 设置</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main class="settings-shell">
+      <header class="settings-header">
+        <div class="brand-mark" aria-hidden="true">
+          <img src="../../icons/icon128.png" alt="">
+        </div>
+        <div>
+          <p class="eyebrow">DeerWebTranslator</p>
+          <h1>翻译设置</h1>
+          <p class="intro">像 Chrome 原生翻译一样顺手：默认把网页可见英文快速替换为中文，也可以随时切换为双语对照。</p>
+        </div>
+      </header>
+
+      <form id="settings-form" novalidate>
+        <section class="settings-card">
+          <div class="card-heading">
+            <div>
+              <h2>供应商与模型</h2>
+              <p>选择一个供应商，再选择预设模型或填写自定义模型。</p>
+            </div>
+            <span id="provider-kind-badge" class="badge">OpenAI-compatible</span>
+          </div>
+
+          <div class="field-grid">
+            <div class="field-group">
+              <label for="provider">API 供应商</label>
+              <select id="provider" name="provider"></select>
+              <p id="provider-help" class="field-help"></p>
+            </div>
+            <div class="field-group">
+              <label for="model-preset">模型</label>
+              <select id="model-preset" name="modelPreset"></select>
+              <input id="custom-model" name="customModel" type="text" autocomplete="off" spellcheck="false" placeholder="例如：my-fast-model" hidden>
+              <p class="field-help">预设模型仅作快捷选项；模型供应商有更新时可直接填写新模型名。</p>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label for="base-url">API Base URL</label>
+            <input id="base-url" name="baseUrl" type="url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1">
+            <p id="endpoint-help" class="field-help">扩展会在后台 service worker 中拼接对应的 API endpoint。自定义地址首次保存时，Chrome 可能会请求网站访问权限。</p>
+          </div>
+
+          <div class="field-group">
+            <label for="api-key">API Key <span id="api-key-optional" class="label-note"></span></label>
+            <div class="secret-field">
+              <input id="api-key" name="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="输入当前供应商 API Key">
+              <button id="toggle-key" class="inline-button" type="button" aria-label="显示或隐藏 API Key">显示</button>
+            </div>
+            <p id="key-help" class="field-help">Key 按供应商分别保存在扩展的 chrome.storage.local 中，不会发送给网页内容脚本。</p>
+          </div>
+        </section>
+
+        <section class="settings-card">
+          <div class="card-heading">
+            <div>
+              <h2>翻译偏好</h2>
+              <p>这些设置会进入后台生成的翻译提示词。</p>
+            </div>
+          </div>
+
+          <div class="field-grid">
+            <div class="field-group">
+              <label for="target-language">目标语言</label>
+              <input id="target-language" name="targetLanguage" list="language-options" type="text" autocomplete="off">
+              <datalist id="language-options">
+                <option value="Chinese (Simplified)"></option>
+                <option value="Chinese (Traditional)"></option>
+                <option value="English"></option>
+                <option value="Japanese"></option>
+                <option value="Korean"></option>
+                <option value="Spanish"></option>
+                <option value="French"></option>
+                <option value="German"></option>
+              </datalist>
+            </div>
+            <div class="field-group">
+              <label for="domain">技术领域</label>
+              <select id="domain" name="domain">
+                <option value="General">General</option>
+                <option value="Software">Software</option>
+                <option value="Embedded Systems">Embedded Systems</option>
+                <option value="Electronics">Electronics</option>
+                <option value="Audio / DSP">Audio / DSP</option>
+                <option value="Academic">Academic</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label for="system-prompt">System Prompt</label>
+            <textarea id="system-prompt" name="systemPrompt" rows="6" spellcheck="false"></textarea>
+            <p class="field-help">扩展会在你的提示词之后追加不可缺少的 JSON、技术术语与“只翻译”约束。</p>
+          </div>
+
+          <div class="field-group">
+            <label for="glossary">自定义术语表</label>
+            <textarea id="glossary" name="glossary" rows="6" placeholder="示例：\nfirmware = 固件\nlatency = 延迟" spellcheck="false"></textarea>
+            <p class="field-help">每行一个术语映射；可使用“原文 = 译文”格式。</p>
+          </div>
+        </section>
+
+        <div class="form-actions">
+          <button id="reset-button" class="button button-secondary" type="button">恢复默认（保留所有 Key）</button>
+          <button class="button button-primary" type="submit">保存设置</button>
+        </div>
+        <p id="save-status" class="save-status" role="status" aria-live="polite"></p>
+      </form>
+
+      <section class="security-note">
+        <h2>隐私与安全</h2>
+        <p>API Key 只由 Options 页面保存、由后台 service worker 读取。content script 不读取 Key，网页脚本也无法访问扩展隔离世界中的 Key。网页正文会发送到你选择的模型供应商，请不要翻译机密信息。</p>
+      </section>
+    </main>
+    <script src="../shared/constants.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>
