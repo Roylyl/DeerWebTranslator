@@ -10,7 +10,7 @@
 }
 
 body {
-  min-width: 340px;
+  width: 360px;
   margin: 0;
   background: #f8fafc;
 }
@@ -39,6 +39,7 @@ button {
 }
 
 .brand-mark {
+  flex: 0 0 38px;
   display: grid;
   overflow: hidden;
   width: 38px;
@@ -68,6 +69,18 @@ p {
 h1 {
   font-size: 17px;
   line-height: 1.2;
+}
+
+.popup-header > div:last-child {
+  min-width: 0;
+}
+
+#page-label,
+#provider-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-height: 16px;
 }
 
 h2 {

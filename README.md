@@ -67,6 +67,7 @@ throughput = 吞吐量
 
 ## 速度与 token 开销
 
+- **弹窗并行初始化**：标签页与设置同时读取，页面状态只做 650 毫秒限时探测。打开弹窗不注入网页脚本；点击操作后，仅在确认内容脚本缺失时补注入。按钮操作复用本次弹窗的配置读取，长模型名称不会撑宽窗口。
 - **视口按需处理**：预取视口下方约 500 像素、上方约 250 像素内的内容，不在启动时翻译整页屏幕外文本。滚动、展开区域和动态内容变化会触发补译。
 - **首批较小**：首批目标约 2,200 个源字符，后续批次约 5,000 个源字符，每批最多 24 项，最多 3 个批次并发。单项不可拆分时可能略超目标，后台仍有硬性输入上限。
 - **长文本拆分**：过长文字在请求层按句子／空格边界拆分，返回后合并到原来的文字节点，不新增布局元素。
@@ -144,6 +145,7 @@ DeerWebTranslator/
 │   └── options/      # 供应商、模型与设置
 └── tests/
     ├── browser-regression.cjs
+    ├── popup-regression.cjs
     └── worker-regression.cjs
 ```
 
@@ -153,12 +155,15 @@ DeerWebTranslator/
 TEST_DEPS="$(mktemp -d)"
 npm install --prefix "$TEST_DEPS" playwright
 NODE_PATH="$TEST_DEPS/node_modules" node tests/browser-regression.cjs
+NODE_PATH="$TEST_DEPS/node_modules" node tests/popup-regression.cjs
 node tests/worker-regression.cjs
 ```
 
 macOS 默认使用本机 Google Chrome；其他环境可设置 `CHROME_BIN`，或使用 Playwright 安装的 Chromium。测试验证原元素／文字节点身份、真实点击、控件尺寸、网格样式、字号、图标、显示模式、视口补译、动态文字、请求去重、缓存失效、429 和响应正文超时。所有模型响应均为模拟，不用于验证真实翻译质量。
 
 修改代码后请重新加载扩展并刷新网页。后台日志可在 `chrome://extensions` 的 Service worker 调试入口查看。
+
+弹窗测试使用实际 HTML/CSS 和模拟扩展 API，覆盖慢配置、慢标签页、早期点击、脚本延迟注入、状态回复竞争、固定宽度与设置保存。它验证初始化不互相阻塞，不代表 Chrome 原生工具栏创建弹窗的耗时测量。
 
 ## 已知限制
 

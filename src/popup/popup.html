@@ -10,12 +10,12 @@
     <main class="popup-shell">
       <header class="popup-header">
         <div class="brand-mark" aria-hidden="true">
-          <img src="../../icons/icon48.png" alt="">
+          <img src="../../icons/icon48.png" alt="" width="38" height="38">
         </div>
         <div>
           <h1>DeerWebTranslator</h1>
-          <p id="page-label" class="muted">准备读取当前页面</p>
-          <p id="provider-label" class="muted">读取翻译引擎配置中…</p>
+          <p id="page-label" class="muted">当前页面</p>
+          <p id="provider-label" class="muted">加载配置…</p>
         </div>
       </header>
 
@@ -41,16 +41,16 @@
           <span class="muted">即时生效</span>
         </div>
         <div class="mode-switch" role="group" aria-label="翻译显示模式">
-          <button class="mode-button" data-mode="translation" type="button">仅译文</button>
-          <button class="mode-button" data-mode="bilingual" type="button">双语</button>
-          <button class="mode-button" data-mode="original" type="button">仅原文</button>
+          <button class="mode-button active" data-mode="translation" aria-pressed="true" type="button">仅译文</button>
+          <button class="mode-button" data-mode="bilingual" aria-pressed="false" type="button">双语</button>
+          <button class="mode-button" data-mode="original" aria-pressed="false" type="button">仅原文</button>
         </div>
       </section>
 
       <p id="error-label" class="error-label" role="alert" hidden></p>
 
       <footer class="popup-footer">
-        <span id="key-status" class="muted">正在检查 API Key…</span>
+        <span id="key-status" class="muted">使用自己的 API Key</span>
         <button id="settings-button" class="link-button" type="button">设置</button>
       </footer>
     </main>

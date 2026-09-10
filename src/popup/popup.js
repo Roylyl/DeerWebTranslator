@@ -1,282 +1,199 @@
-(function initializeDeerWebTranslatorPopup(global) {
+(function (global) {
   "use strict";
-
   const DT = global.DeerWebTranslator;
+  const $ = (id) => document.getElementById(id);
   const elements = {
-    pageLabel: document.getElementById("page-label"),
-    providerLabel: document.getElementById("provider-label"),
-    statusLabel: document.getElementById("status-label"),
-    progressLabel: document.getElementById("progress-label"),
-    progressBar: document.getElementById("progress-bar"),
-    progressTrack: document.querySelector(".progress-track"),
-    detailLabel: document.getElementById("detail-label"),
-    translateButton: document.getElementById("translate-button"),
-    stopButton: document.getElementById("stop-button"),
-    modeButtons: Array.from(document.querySelectorAll(".mode-button")),
-    errorLabel: document.getElementById("error-label"),
-    keyStatus: document.getElementById("key-status"),
-    settingsButton: document.getElementById("settings-button")
+    pageLabel: $("page-label"), providerLabel: $("provider-label"),
+    statusLabel: $("status-label"), progressLabel: $("progress-label"),
+    progressBar: $("progress-bar"), progressTrack: document.querySelector(".progress-track"),
+    detailLabel: $("detail-label"), translateButton: $("translate-button"),
+    stopButton: $("stop-button"), modeButtons: [...document.querySelectorAll(".mode-button")],
+    errorLabel: $("error-label"), keyStatus: $("key-status"), settingsButton: $("settings-button")
   };
+  let activeTab = null, configPromise = null, injectionPromise = null;
+  let busy = false, interacted = false, pageStateReceived = false, revision = 0;
+  let state = { status: "idle", mode: DT.DEFAULT_DISPLAY_MODE, total: 0, completed: 0, cached: 0 };
 
-  let activeTab = null;
-  let currentProvider = DT.getProvider("deepseek");
-  let currentState = {
-    status: "idle",
-    mode: DT.DEFAULT_DISPLAY_MODE,
-    total: 0,
-    completed: 0,
-    cached: 0,
-    error: ""
-  };
-
-  function setError(message) {
-    elements.errorLabel.textContent = message || "";
+  function deadline(promise, ms, message) {
+    let timer;
+    return Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    })]).finally(() => clearTimeout(timer));
+  }
+  const supported = (tab) => Boolean(tab && /^https?:\/\//i.test(tab.url || ""));
+  function setError(message = "") {
+    elements.errorLabel.textContent = message;
     elements.errorLabel.hidden = !message;
   }
-
-  function isSupportedPage(tab) {
-    return Boolean(tab && typeof tab.url === "string" && /^https?:\/\//i.test(tab.url));
+  function renderButtons() {
+    const unavailable = activeTab !== null && !supported(activeTab);
+    elements.translateButton.disabled = busy || unavailable || state.status === "translating";
+    elements.translateButton.textContent = busy ? "处理中…" : "翻译当前页面";
+    elements.stopButton.disabled = busy || unavailable || !(state.status === "translating" || state.autoTranslate);
+    elements.modeButtons.forEach((button) => { button.disabled = busy; });
   }
-
-  function getProviderKey(saved, providerId) {
-    const apiKeys = saved && saved.apiKeys && typeof saved.apiKeys === "object" ? saved.apiKeys : {};
-    if (typeof apiKeys[providerId] === "string") {
-      return apiKeys[providerId].trim();
+  function renderState(next, advanceRevision = true) {
+    if (!next) return;
+    if (advanceRevision) revision++;
+    state = { ...state, ...next };
+    const total = Math.max(0, Number(state.total) || 0);
+    const done = Math.min(total, Math.max(0, Number(state.completed) || 0));
+    const percent = total ? Math.round(done / total * 100) : 0;
+    elements.statusLabel.textContent = {
+      idle: "未开始", translating: "翻译中", completed: "已完成", stopped: "已停止", error: "翻译失败"
+    }[state.status] || "未开始";
+    elements.progressLabel.textContent = done + " / " + total;
+    elements.progressBar.style.width = percent + "%";
+    elements.progressTrack.setAttribute("aria-valuenow", String(percent));
+    elements.detailLabel.textContent = state.error
+      || (state.cached ? "复用缓存 " + state.cached + " 段。" : "按需翻译当前页面，滚动时自动补译。");
+    for (const button of elements.modeButtons) {
+      const selected = button.dataset.mode === state.mode;
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-pressed", String(selected));
     }
-    return providerId === "deepseek" && typeof saved.apiKey === "string" ? saved.apiKey.trim() : "";
+    renderButtons();
   }
-
-  async function loadStoredConfig() {
-    const result = await chrome.storage.local.get(DT.STORAGE_KEY);
-    const saved = result && result[DT.STORAGE_KEY] && typeof result[DT.STORAGE_KEY] === "object"
-      ? result[DT.STORAGE_KEY]
-      : {};
-    const settings = DT.normalizePublicSettings(saved);
-    const provider = DT.getProvider(settings.provider);
-    const apiKey = getProviderKey(saved, settings.provider);
-    return {
-      saved,
-      settings,
-      provider,
-      apiKey,
-      ready: !provider.requiresApiKey || Boolean(apiKey)
-    };
-  }
-
-  async function sendToTab(message) {
-    if (!activeTab || typeof activeTab.id !== "number") {
-      throw new Error("找不到当前页面。");
-    }
-    return chrome.tabs.sendMessage(activeTab.id, message);
-  }
-
-  async function ensureContentScript() {
-    if (!activeTab || typeof activeTab.id !== "number") {
-      throw new Error("找不到当前页面。");
-    }
-    if (!isSupportedPage(activeTab)) {
-      throw new Error("Chrome 内部页面或当前页面不允许扩展访问。");
-    }
-
-    try {
-      const existing = await sendToTab({ type: "DEERWEBTRANSLATOR_GET_STATE" });
-      if (existing && existing.ok) {
-        return existing;
-      }
-    } catch (error) {
-      // A tab that was already open before the extension loaded may not yet
-      // have the declared content script. Use activeTab for a fallback inject.
-    }
-
-    try {
-      await chrome.scripting.insertCSS({
-        target: { tabId: activeTab.id },
-        files: ["src/content/content-style.css"]
-      });
-    } catch (error) {
-      // Duplicate CSS insertion is harmless; executeScript below is the
-      // readiness check and will surface restricted-page errors.
-    }
-    await chrome.scripting.executeScript({
-      target: { tabId: activeTab.id },
-      files: ["src/shared/constants.js", "src/shared/dom-codec.js", "src/content/content-script.js"]
-    });
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    const injected = await sendToTab({ type: "DEERWEBTRANSLATOR_GET_STATE" });
-    if (!injected || !injected.ok) {
-      throw new Error("无法连接当前页面的内容脚本。");
-    }
-    return injected;
-  }
-
-  function stateLabel(status) {
-    return {
-      idle: "未开始",
-      translating: "翻译中",
-      completed: "已完成",
-      stopped: "已停止",
-      error: "翻译失败"
-    }[status] || "未开始";
-  }
-
-  function renderState(nextState) {
-    if (!nextState || typeof nextState !== "object") {
-      return;
-    }
-    currentState = { ...currentState, ...nextState };
-    const total = Math.max(0, Number(currentState.total) || 0);
-    const completed = Math.min(total, Math.max(0, Number(currentState.completed) || 0));
-    const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
-    elements.statusLabel.textContent = stateLabel(currentState.status);
-    elements.progressLabel.textContent = `${completed} / ${total}`;
-    elements.progressBar.style.width = `${percentage}%`;
-    elements.progressTrack.setAttribute("aria-valuenow", String(percentage));
-    elements.detailLabel.textContent = currentState.error
-      || (currentState.cached > 0 ? `已完成，命中缓存 ${currentState.cached} 段。` : "翻译当前页面的可读正文。");
-    elements.modeButtons.forEach((button) => {
-      const active = button.dataset.mode === currentState.mode;
-      button.classList.toggle("active", active);
-      button.setAttribute("aria-pressed", active ? "true" : "false");
-    });
-    const translating = currentState.status === "translating";
-    elements.translateButton.disabled = translating;
-    elements.stopButton.disabled = !translating;
-  }
-
   function renderProvider(config) {
-    currentProvider = config.provider;
-    elements.providerLabel.textContent = `${config.provider.label} · ${config.settings.model}`;
-    elements.keyStatus.textContent = config.provider.requiresApiKey
-      ? (config.ready ? "当前 API Key 已配置" : "当前供应商尚未配置 API Key")
-      : "本地模型 · 无需 API Key";
+    const label = config.provider.label + " · " + config.settings.model;
+    elements.providerLabel.textContent = label;
+    elements.providerLabel.title = label;
+    elements.keyStatus.textContent = !config.provider.requiresApiKey ? "本地模型 · 无需 API Key"
+      : config.ready ? "API Key 已配置" : "请在设置中填写 API Key";
   }
-
-  async function refreshPageState() {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    activeTab = tabs[0] || null;
-    if (!activeTab) {
-      elements.pageLabel.textContent = "没有活动页面";
-      elements.translateButton.disabled = true;
-      elements.stopButton.disabled = true;
-      return;
-    }
-    try {
-      const parsedUrl = new URL(activeTab.url || "");
-      elements.pageLabel.textContent = parsedUrl.hostname || "当前页面";
-    } catch (error) {
-      elements.pageLabel.textContent = "当前页面";
-    }
-    const config = await loadStoredConfig();
-    renderProvider(config);
-    renderState({ mode: config.settings.displayMode });
-    if (!isSupportedPage(activeTab)) {
-      setError("当前页面是 Chrome 内部页面，无法注入翻译脚本。");
-      elements.translateButton.disabled = true;
-      elements.stopButton.disabled = true;
-      return;
-    }
-    try {
-      const response = await ensureContentScript();
-      renderState(response.state);
-      setError(response.state && response.state.error ? response.state.error : "");
-    } catch (error) {
-      setError(error && error.message ? error.message : "无法连接当前页面。");
-    }
-  }
-
-  async function translateCurrentPage() {
-    setError("");
-    const config = await loadStoredConfig();
-    renderProvider(config);
-    if (!config.ready) {
-      setError(`请先在“设置”中填写 ${config.provider.label} API Key。`);
-      return;
-    }
-    try {
-      await ensureContentScript();
-      // Starting a page translation always follows the native-translation
-      // flow: return Chinese into the page's visual position and hide the
-      // source text. The mode switch remains available after that for users
-      // who want bilingual comparison or the original page back.
-      const replacementSettings = {
-        ...config.settings,
-        displayMode: DT.DEFAULT_DISPLAY_MODE
-      };
-      const response = await sendToTab({
-        type: "DEERWEBTRANSLATOR_START_TRANSLATION",
-        // This object is intentionally non-secret. Provider keys remain in
-        // extension storage and are read only by the service worker.
-        settings: replacementSettings
+  function loadConfig() {
+    if (!configPromise) {
+      configPromise = deadline(chrome.storage.local.get(DT.STORAGE_KEY), 2500,
+        "读取设置超时，请重新打开弹窗。").then((result) => {
+        const saved = result?.[DT.STORAGE_KEY] || {};
+        const settings = DT.normalizePublicSettings(saved);
+        const provider = DT.getProvider(settings.provider);
+        const key = saved.apiKeys?.[settings.provider]
+          ?? (settings.provider === "deepseek" ? saved.apiKey : "");
+        // Only a boolean readiness flag is retained outside the storage result.
+        return { settings, provider, ready: !provider.requiresApiKey || Boolean(String(key || "").trim()) };
       });
-      if (!response || !response.ok) {
-        throw new Error(response && response.error ? response.error.message : "无法启动翻译。");
-      }
-      renderState(response.state);
-    } catch (error) {
-      setError(error && error.message ? error.message : "无法启动翻译。");
+      const pending = configPromise;
+      pending.catch(() => { if (configPromise === pending) configPromise = null; });
     }
+    return configPromise;
   }
-
-  async function stopCurrentPage() {
-    setError("");
-    try {
-      const response = await sendToTab({ type: "DEERWEBTRANSLATOR_STOP_TRANSLATION" });
-      if (response && response.state) {
-        renderState(response.state);
-      }
-    } catch (error) {
-      setError("无法停止当前页面的翻译。");
-    }
-  }
-
-  async function changeMode(mode) {
-    setError("");
-    try {
-      const result = await chrome.storage.local.get(DT.STORAGE_KEY);
-      const saved = result && result[DT.STORAGE_KEY] && typeof result[DT.STORAGE_KEY] === "object"
-        ? result[DT.STORAGE_KEY]
-        : {};
-      await chrome.storage.local.set({
-        [DT.STORAGE_KEY]: {
-          ...saved,
-          ...DT.normalizePublicSettings({ ...saved, displayMode: mode }),
-          apiKeys: saved.apiKeys && typeof saved.apiKeys === "object" ? saved.apiKeys : {}
-        }
-      });
-      if (activeTab && isSupportedPage(activeTab)) {
-        const response = await ensureContentScript();
-        const modeResponse = await sendToTab({ type: "DEERWEBTRANSLATOR_SET_DISPLAY_MODE", mode });
-        renderState((modeResponse && modeResponse.state) || response.state);
-      } else {
-        renderState({ mode });
-      }
-    } catch (error) {
-      setError(error && error.message ? error.message : "显示模式切换失败。");
-    }
-  }
-
-  elements.translateButton.addEventListener("click", () => {
-    translateCurrentPage().catch((error) => setError(error && error.message ? error.message : "无法启动翻译。"));
+  // Both calls start immediately. Neither depends on content-script readiness.
+  const tabReady = deadline(chrome.tabs.query({ active: true, currentWindow: true }), 1500,
+    "读取当前标签页超时，请重新打开弹窗。").then((tabs) => {
+    activeTab = tabs[0] || {};
+    elements.pageLabel.textContent = supported(activeTab) ? new URL(activeTab.url).hostname
+      : activeTab.id == null ? "没有活动页面" : "此页面不支持翻译";
+    renderButtons();
+    return activeTab;
   });
-  elements.stopButton.addEventListener("click", () => {
-    stopCurrentPage().catch(() => setError("无法停止当前页面的翻译。"));
-  });
+  const initialConfig = loadConfig();
+
+  function send(tab, message, ms = 5000) {
+    return deadline(chrome.tabs.sendMessage(tab.id, message), ms,
+      "页面暂时没有响应，请等待页面加载完成后重试。");
+  }
+  function missingReceiver(error) {
+    return /receiving end does not exist|could not establish connection/i.test(error?.message || "");
+  }
+  async function inject(tab) {
+    if (!injectionPromise) {
+      injectionPromise = deadline(Promise.all([
+        chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ["src/content/content-style.css"] }),
+        chrome.scripting.executeScript({ target: { tabId: tab.id },
+          files: ["src/shared/constants.js", "src/shared/dom-codec.js", "src/content/content-script.js"] })
+      ]), 5000, "页面脚本加载超时，请刷新网页后重试。");
+      injectionPromise.finally(() => { injectionPromise = null; }).catch(() => {});
+    }
+    await injectionPromise;
+  }
+  async function command(message) {
+    const tab = await tabReady;
+    if (!supported(tab)) throw new Error("当前页面不允许翻译，请打开普通网页。");
+    try {
+      return await send(tab, message);
+    } catch (error) {
+      // Only a confirmed absent receiver permits injection and one retry.
+      // A timeout may mean the command already ran, so never resend it blindly.
+      if (!missingReceiver(error)) throw error;
+      await inject(tab);
+      return send(tab, message);
+    }
+  }
+  function accept(response) {
+    if (!response?.ok) throw new Error(response?.error?.message || "页面操作失败。");
+    pageStateReceived = true;
+    renderState(response.state);
+  }
+  async function action(operation) {
+    if (busy) return;
+    busy = true; interacted = true; revision++;
+    setError(); renderButtons();
+    try { await operation(); }
+    catch (error) { setError(error.message || "操作失败，请重试。"); }
+    finally { busy = false; renderButtons(); }
+  }
+  elements.translateButton.addEventListener("click", () => action(async () => {
+    const config = await loadConfig();
+    renderProvider(config);
+    if (!config.ready) throw new Error("请先在设置中填写 " + config.provider.label + " API Key。");
+    accept(await command({ type: "DEERWEBTRANSLATOR_START_TRANSLATION",
+      settings: { ...config.settings, displayMode: DT.DEFAULT_DISPLAY_MODE } }));
+  }));
+  elements.stopButton.addEventListener("click", () => action(async () => {
+    accept(await command({ type: "DEERWEBTRANSLATOR_STOP_TRANSLATION" }));
+  }));
   elements.settingsButton.addEventListener("click", () => chrome.runtime.openOptionsPage());
-  elements.modeButtons.forEach((button) => {
-    button.addEventListener("click", () => changeMode(button.dataset.mode));
-  });
 
+  async function saveMode(mode) {
+    // Read at write time to preserve keys/settings changed in another extension page.
+    const result = await deadline(chrome.storage.local.get(DT.STORAGE_KEY), 2500, "读取设置超时。");
+    const saved = result?.[DT.STORAGE_KEY] || {};
+    await deadline(chrome.storage.local.set({ [DT.STORAGE_KEY]: { ...saved, displayMode: mode } }),
+      2500, "保存显示模式超时。");
+    configPromise = null;
+  }
+  for (const button of elements.modeButtons) button.addEventListener("click", () => action(async () => {
+    const mode = button.dataset.mode;
+    const tab = await tabReady;
+    // Update the live page before waiting for a storage write.
+    if (supported(tab)) accept(await command({ type: "DEERWEBTRANSLATOR_SET_DISPLAY_MODE", mode }));
+    else renderState({ mode });
+    await saveMode(mode);
+  }));
   chrome.runtime.onMessage.addListener((message, sender) => {
-    if (!message || message.type !== "DEERWEBTRANSLATOR_PROGRESS" || !activeTab || !sender.tab) {
-      return;
-    }
-    if (sender.tab.id === activeTab.id) {
-      renderState(message.state);
-      setError(message.state && message.state.status === "error" ? message.state.error : "");
-    }
+    if (message?.type !== "DEERWEBTRANSLATOR_PROGRESS" || !activeTab
+      || sender.tab?.id !== activeTab.id) return;
+    pageStateReceived = true;
+    renderState(message.state);
+    setError(message.state?.status === "error" ? message.state.error : "");
   });
-
-  refreshPageState().catch((error) => {
-    setError(error && error.message ? error.message : "初始化失败。");
+  chrome.storage.onChanged?.addListener((changes, area) => {
+    if (area !== "local" || !changes[DT.STORAGE_KEY]) return;
+    configPromise = null;
+    loadConfig().then(renderProvider).catch(() => {});
   });
+  initialConfig.then((config) => {
+    if (configPromise !== initialConfig) return;
+    renderProvider(config);
+    if (!pageStateReceived && !interacted) renderState({ mode: config.settings.displayMode }, false);
+  }).catch((error) => {
+    elements.providerLabel.textContent = "暂时无法读取配置";
+    elements.keyStatus.textContent = "可打开设置检查";
+    if (!interacted) setError(error.message);
+  });
+  tabReady.then(async (tab) => {
+    if (!supported(tab) || interacted) return;
+    const probeRevision = revision;
+    try {
+      // Opening the popup never injects scripts. A busy page cannot hold the UI.
+      const result = await send(tab, { type: "DEERWEBTRANSLATOR_GET_STATE" }, 650);
+      if (interacted || revision !== probeRevision || !result?.ok) return;
+      pageStateReceived = true;
+      renderState(result.state);
+      setError(result.state?.error || "");
+    } catch {
+      // A missing script is normal on pre-install tabs; install on user action.
+    }
+  }).catch((error) => { if (!interacted) setError(error.message); });
 })(globalThis);
