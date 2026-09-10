@@ -1,142 +1,164 @@
-/* Run with Node + Playwright. Uses a local fixture and mock model responses;
-   never reads a real API key or sends page text to an external provider. */
+/* Local Chrome fixtures with mocked translation. Never reads real credentials. */
 const { chromium } = require("playwright");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const root = path.resolve(__dirname, "..");
-const chromePath = process.env.CHROME_BIN || (process.platform === "darwin"
+const executablePath = process.env.CHROME_BIN || (process.platform === "darwin"
   ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : undefined);
-
 (async () => {
-  const browser = await chromium.launch({ headless: true, executablePath: chromePath });
+  const browser = await chromium.launch({ headless: true, executablePath });
   try {
-    const context = await browser.newContext();
-    await context.route("https://example.test/**", (route) => route.fulfill({ body: "destination" }));
-    const page = await context.newPage();
+    const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+    await page.route("https://example.test/**", (route) => route.fulfill({ body: "" }));
     await page.goto("https://example.test/repo");
-    await page.setContent(`<!doctype html><html><head><style>
-      body { font: 16px sans-serif; } main { width: 680px; }
-      h2 {font-size: 28px;} .label {font-size: 18px;}
-      a {color: rgb(20, 80, 180);} .invisible {display:none}
-    </style></head><body><main>
-      <h2 id="short">Installation</h2>
-      <p id="term" class="label">API</p>
-      <p id="long">Please read the <a id="docs" href="/docs?q=1#start">documentation</a> and the <a href="/license" target="_blank" rel="noopener">license</a> before installing this software.</p>
-      <p id="code">Install the package with <code id="cmd">npm install deer</code> to get started.</p>
-      <p id="nested">Read the <a href="/guide"><strong>quick start</strong> guide</a> before continuing with this example.</p>
-      <a id="standalone" href="/releases">Releases</a>
-      <p id="skip" translate="no">Never translate this content.</p>
-      <p id="hidden"><span class="invisible">Hidden secret</span>Visible example text that is long enough to be a sentence.</p>
-      <p id="hidden-label"><span class="invisible">Hidden secret</span>Installation</p>
-      <p id="agent-keep">DeerWebTranslator</p>
-      <table><tr><th id="cell-short">Installation</th><td id="cell-link"><a href="/table-docs">documentation</a></td></tr></table>
-    </main><footer role="contentinfo"><a id="footer-terms" href="/terms">Terms</a><a id="footer-privacy" href="/privacy">Privacy</a></footer></body></html>`);
+    await page.setContent(`<html><head><title>Repository guide</title><style>
+      body {font:16px sans-serif;margin:20px} nav{display:grid;grid-template-columns:140px 140px;gap:10px}
+      button,a{font:inherit} nav>a,button{box-sizing:border-box;width:140px;height:38px}
+      nav>a:last-child{border:3px solid red} button::before{content:"★"}
+      #sentence{width:620px} #footer{margin-top:2400px} #hidden{display:none}
+      #plain{font-size:24px} #tiny{font-size:11px}
+    </style></head><body>
+      <nav><button id="action"><svg width="12" height="12"></svg><span>Settings</span></button>
+      <a id="link" href="/docs">Documentation</a></nav>
+      <h2 id="plain">Installation</h2><p id="tiny">Installation</p>
+      <p id="duplicate">Installation</p>
+      <p id="sentence">Please read the <a id="inline" href="/guide"><strong>documentation</strong></a> before continuing.</p>
+      <p id="term">API</p><p id="code">Install with <code>npm install deer</code> today.</p>
+      <p id="keep">DeerWebTranslator</p><p id="chinese">这是中文。</p><p id="url">https://example.test/private?token=example</p>
+      <p id="hidden">Private hidden text</p><p translate="no">Never translate</p>
+      <div contenteditable="plaintext-only">Editable private text</div><input value="secret">
+      <table><tr><th id="cell">Installation</th><td><a id="cell-link" href="/table">Documentation</a></td></tr></table>
+      <footer id="footer"><a id="terms" href="/terms">Terms</a></footer>
+    </body></html>`);
     await page.evaluate(() => {
-      window.requestCount = 0;
-      window.linkClicks = 0;
-      document.getElementById("docs").addEventListener("click", (event) => {
-        event.preventDefault();
-        window.linkClicks++;
-      });
+      window.sent = []; window.progress = []; window.clicks = [];
+      window.originalButton = document.querySelector("#action");
+      window.originalText = document.querySelector("#action span").firstChild;
+      window.originalLink = document.querySelector("#inline");
+      document.querySelector("#action").addEventListener("click", (e) => window.clicks.push(e.isTrusted));
+      document.querySelector("#inline").addEventListener("click", (e) => { e.preventDefault(); window.clicks.push(e.isTrusted); });
       const handlers = [];
-      window.sendExtensionMessage = (message) => new Promise((resolve) => {
-        handlers.forEach((handler) => handler(message, {}, resolve));
-      });
+      window.send = (type, rest = {}) => new Promise((resolve) =>
+        handlers.forEach((fn) => fn({ type: "DEERWEBTRANSLATOR_" + type, ...rest }, {}, resolve)));
+      const dict = [["Installation", "安装"], ["Settings", "设置"], ["Documentation", "文档"],
+        ["documentation", "文档"], ["Please read the", "请阅读"], ["before continuing.", "然后继续。"],
+        ["Install with", "安装方式"], ["today.", "现在。"], ["Terms", "条款"], ["Updated text", "已更新文字"]];
       window.chrome = { runtime: {
-        onMessage: { addListener(handler) { handlers.push(handler); } },
+        onMessage: { addListener(fn) { handlers.push(fn); } },
         async sendMessage(message) {
+          if (message.type === "DEERWEBTRANSLATOR_PROGRESS") window.progress.push(message.state);
           if (message.type !== "DEERWEBTRANSLATOR_TRANSLATE_BATCH") return { ok: true };
-          window.requestCount++;
-          window.sentItems = [...(window.sentItems || []), ...message.items];
-          const replacements = [
-            ["Installation", "安装"], ["API", "API（应用程序编程接口）"],
-            ["Terms", "条款"], ["Privacy", "隐私"],
-            ["Please read the ", "请阅读"], ["documentation", "文档"],
-            [" and the ", "和"], ["license", "许可证"],
-            [" before installing this software.", "，然后安装软件。"],
-            ["Install the package with ", "使用"], [" to get started.", "安装软件包。"],
-            ["Read the ", "阅读"], ["quick start", "快速开始"], [" guide", "指南"],
-            [" before continuing with this example.", "，然后继续示例。"],
-            ["Releases", "发布版本"],
-            ["Visible example text that is long enough to be a sentence.", "足够长的可见示例文本。"]
-          ];
+          window.sent.push(message);
+          await new Promise((r) => setTimeout(r, window.mockDelay || 20));
           return { ok: true, cachedCount: 0, translations: message.items.map((item) => ({
-            id: item.id, text: replacements.reduce((text, [from, to]) => text.replaceAll(from, to), item.text)
+            id: item.id, text: dict.reduce((text, [from, to]) => text.replaceAll(from, to), item.text)
           })) };
         }
       }};
     });
+    const dimensions = () => page.locator("nav").evaluate((nav) => ({
+      children: nav.childElementCount,
+      nav: [nav.offsetWidth, nav.offsetHeight],
+      button: [nav.firstElementChild.offsetWidth, nav.firstElementChild.offsetHeight],
+      border: getComputedStyle(nav.lastElementChild).borderTopWidth,
+      icon: nav.querySelectorAll("svg").length,
+      font: getComputedStyle(document.querySelector("#plain")).fontSize
+    }));
+    const before = await dimensions();
     await page.addStyleTag({ path: path.join(root, "src/content/content-style.css") });
     for (const file of ["src/shared/constants.js", "src/shared/dom-codec.js", "src/content/content-script.js"]) {
       await page.addScriptTag({ path: path.join(root, file) });
     }
-    const mode = (value) => page.evaluate((mode) => window.sendExtensionMessage({
-      type: "DEERWEBTRANSLATOR_SET_DISPLAY_MODE", mode
-    }), value);
-    await page.evaluate(() => window.sendExtensionMessage({
-      type: "DEERWEBTRANSLATOR_START_TRANSLATION", settings: { displayMode: "bilingual" }
-    }));
-    await page.waitForFunction(async () => (await window.sendExtensionMessage({
-      type: "DEERWEBTRANSLATOR_GET_STATE"
-    })).state.status === "completed");
-    assert.equal(await page.locator("#short + .deeptranslate-translation").innerText(), "Installation｜安装");
-    assert.equal(await page.locator("#term + .deeptranslate-translation").innerText(), "API｜应用程序编程接口");
-    assert.equal(await page.locator("#hidden-label + .deeptranslate-translation").innerText(), "Installation｜安装");
-    assert.equal(await page.locator("#agent-keep + .deeptranslate-translation").count(), 0);
-    assert.equal(await page.locator("#agent-keep").isVisible(), true);
-    assert.equal(await page.locator("#cell-short > .deeptranslate-translation").innerText(), "Installation｜安装");
-    assert.equal(await page.locator("#footer-terms + .deeptranslate-translation").innerText(), "Terms｜条款");
-    assert.equal(await page.locator("#footer-privacy + .deeptranslate-translation").innerText(), "Privacy｜隐私");
-    assert.equal(await page.locator("#footer-terms + .deeptranslate-translation").getAttribute("href"), "https://example.test/terms");
-    assert.equal(await page.locator("#standalone + a").innerText(), "Releases｜发布版本");
-    assert.equal(await page.locator("#short + .deeptranslate-translation").evaluate((e) => getComputedStyle(e).fontSize), "28px");
-    assert.equal(await page.locator("#short + .deeptranslate-translation").evaluate((e) => getComputedStyle(e).borderLeftWidth), "0px");
-    assert.equal(await page.locator("#long").isVisible(), true);
-    assert.equal(await page.locator("#long + .deeptranslate-translation").evaluate((e) => getComputedStyle(e).borderLeftWidth), "3px");
-    const links = page.locator("#long + .deeptranslate-translation a");
-    assert.equal(await links.count(), 2);
-    assert.equal(await links.first().innerText(), "文档");
-    assert.equal(await links.first().getAttribute("href"), "https://example.test/docs?q=1#start");
-    await links.first().click();
-    assert.equal(await page.evaluate(() => window.linkClicks), 1);
-    const popupPromise = context.waitForEvent("page");
-    await links.nth(1).click();
-    const popup = await popupPromise;
-    await popup.waitForLoadState();
-    assert.equal(popup.url(), "https://example.test/license");
-    await popup.close();
-    assert.equal(await page.locator("#nested + .deeptranslate-translation a strong").innerText(), "快速开始");
-    assert.equal(await page.locator("#code + .deeptranslate-translation code").innerText(), "npm install deer");
-    assert.equal(await page.locator("#cmd").count(), 1);
-    assert.equal(await page.evaluate(() => window.sentItems.some((i) => /Hidden secret|Never translate|npm install/.test(i.text))), false);
-    const count = await page.evaluate(() => window.requestCount);
-    for (const value of ["original", "translation", "bilingual", "original", "translation"]) {
-      await mode(value);
-      assert.equal(await page.locator("#long").isVisible(), value !== "translation");
-      assert.equal(await page.locator("#short").isVisible(), value === "original");
-      assert.equal(await page.locator("#short + .deeptranslate-translation").isVisible(), value !== "original");
-      assert.equal(await links.first().getAttribute("href"), "https://example.test/docs?q=1#start");
-      assert.equal(await page.locator("#cell-link > .deeptranslate-translation a").first().getAttribute("href"), "https://example.test/table-docs");
+    await page.evaluate(() => window.send("START_TRANSLATION", { settings: { displayMode: "translation" } }));
+    await page.waitForFunction(() => window.progress.at(-1)?.status === "completed");
+    assert.equal(await page.locator("#action span").innerText(), "设置");
+    assert.equal(await page.locator("#link").innerText(), "文档");
+    assert.equal(await page.locator("#plain").innerText(), "安装");
+    assert.equal(await page.locator("#cell").innerText(), "安装");
+    assert.equal(await page.locator("#code code").innerText(), "npm install deer");
+    assert.equal(await page.locator("#inline strong").innerText(), "文档");
+    assert.deepEqual(await dimensions(), before, "real controls, grid geometry, pseudo-elements and font stay intact");
+    assert.equal(await page.locator(".deeptranslate-translation").count(), 0, "replacement adds no DOM elements");
+    assert.equal(await page.evaluate(() => window.originalButton === document.querySelector("#action")
+      && window.originalText === document.querySelector("#action span").firstChild
+      && window.originalLink === document.querySelector("#inline")), true);
+    await page.locator("#action").click();
+    await page.locator("#inline").click();
+    assert.deepEqual(await page.evaluate(() => window.clicks), [true, true], "original trusted clicks must survive");
+    const sent = await page.evaluate(() => window.sent.flatMap((batch) => batch.items));
+    assert(!sent.some((item) => /Private|Never translate|Editable|npm install|https:\/\/|这是中文|Terms/.test(item.text)));
+    assert.equal(sent.filter((item) => item.text === "Installation" && item.context.tag === "p").length, 1);
+    // Same context can be coalesced; differently styled paragraphs remain valid.
+    assert.equal(await page.locator("#terms").innerText(), "Terms");
+    const count = await page.evaluate(() => window.sent.length);
+    for (const mode of ["original", "bilingual", "translation", "original", "translation"]) {
+      await page.evaluate((mode) => window.send("SET_DISPLAY_MODE", { mode }), mode);
+      assert.equal(await page.locator("#action span").innerText(),
+        mode === "original" ? "Settings" : mode === "bilingual" ? "Settings｜设置" : "设置");
+      assert.equal(await page.locator("#plain").innerText(),
+        mode === "original" ? "Installation" : mode === "bilingual" ? "Installation｜安装" : "安装");
+      assert.equal(await page.locator("#inline").getAttribute("href"), "/guide");
+      if (mode === "bilingual") {
+        assert.equal(await page.locator("#sentence + .deeptranslate-translation a").innerText(), "文档");
+      }
     }
-    await links.first().click();
-    assert.equal(await page.evaluate(() => window.linkClicks), 2);
-    await page.waitForTimeout(1300);
-    assert.equal(await page.evaluate(() => window.requestCount), count, "mode changes must not request translations");
-    await page.evaluate(() => document.getElementById("docs").setAttribute("href", "/updated"));
-    await page.waitForFunction(() => document.querySelector("#long + .deeptranslate-translation a")?.href === "https://example.test/updated");
-    await page.waitForTimeout(1300);
-    assert.equal(await page.locator("#cell-link > .deeptranslate-translation a").count(), 1, "table link must survive dynamic scans");
-    assert.equal(await page.evaluate(() => {
-      const codec = window.DeerDOMCodec;
-      try { codec.validate("[[DWT_OPEN_0]]link[[DWT_CLOSE_0]]", "丢失标记"); return false; }
-      catch { return true; }
-    }), true);
-    assert.equal(await page.evaluate(() => {
-      const p = window.DeerDOMCodec.serialize(document.createElement("p"));
-      const fragment = window.DeerDOMCodec.render(p, '<img src=x onerror="window.injected=true">');
-      document.body.append(fragment);
-      return !window.injected && !document.querySelector("img");
-    }), true);
-    console.log("PASS: compact/long bilingual, typography, 5 mode transitions, links and original handlers, new tab, nested formatting, code protection, hidden text, no duplicate calls, dynamic href and safe rendering");
+    await page.waitForTimeout(400);
+    assert.equal(await page.evaluate(() => window.sent.length), count, "mode changes must cost zero API requests");
+    await page.evaluate(() => document.querySelector("#inline").href = "/new-guide");
+    await page.waitForTimeout(300);
+    assert.equal(await page.evaluate(() => window.sent.length), count, "href changes do not require retranslating labels");
+    await page.evaluate(() => document.querySelector("#tiny").firstChild.data = "Updated text");
+    await page.waitForFunction(() => document.querySelector("#tiny").textContent === "已更新文字");
+    await page.evaluate(() => window.send("SET_DISPLAY_MODE", { mode: "original" }));
+    assert.equal(await page.locator("#tiny").innerText(), "Updated text", "restore latest site-authored source");
+    await page.evaluate(() => window.send("SET_DISPLAY_MODE", { mode: "translation" }));
+    await page.locator("#footer").scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => document.querySelector("#terms").textContent === "条款");
+    // Cancel an in-flight response: it must not replace the newly written source.
+    await page.evaluate(() => {
+      window.mockDelay = 500;
+      document.querySelector("#terms").firstChild.data = "Updated text";
+    });
+    const prior = await page.evaluate(() => window.sent.length);
+    await page.waitForFunction((prior) => window.sent.length > prior, prior);
+    await page.evaluate(() => window.send("STOP_TRANSLATION"));
+    await page.waitForTimeout(650);
+    assert.equal(await page.locator("#terms").innerText(), "Updated text");
+    // Long individual Text nodes used to exceed the batch hard limit.
+    await page.evaluate(() => {
+      window.mockDelay = 0;
+      const p = document.createElement("p");
+      p.id = "huge";
+      p.append(document.createTextNode("Read documentation. ".repeat(1000)));
+      document.body.prepend(p);
+      window.longOriginal = p.firstChild.data;
+      window.longNode = p.firstChild;
+      window.longStart = window.sent.length;
+      scrollTo(0, 0);
+      return window.send("START_TRANSLATION", { settings: { displayMode: "translation" } });
+    });
+    await page.waitForFunction(() => document.querySelector("#huge").textContent.includes("文档"));
+    assert.equal(await page.locator("#huge").textContent(),
+      (await page.evaluate(() => window.longOriginal)).replaceAll("documentation", "文档"),
+      "long-text boundaries preserve original separators");
+    assert.equal(await page.evaluate(() => document.querySelector("#huge").firstChild === window.longNode), true);
+    assert.equal(await page.evaluate(() => window.sent.slice(window.longStart)
+      .every((batch) => batch.items.reduce((sum, item) => sum + item.text.length, 0) <= 14000)), true);
+    await page.evaluate(() => window.send("SET_DISPLAY_MODE", { mode: "original" }));
+    assert.equal(await page.locator("#huge").textContent(), await page.evaluate(() => window.longOriginal));
+    await page.evaluate(() => {
+      document.querySelector("#huge").remove();
+      history.pushState({}, "", "/new-repository");
+      const p = document.createElement("p");
+      p.id = "spa";
+      p.append(document.createTextNode("Updated text"));
+      document.body.prepend(p);
+      return window.send("SET_DISPLAY_MODE", { mode: "translation" });
+    });
+    await page.waitForFunction(() => document.querySelector("#spa").textContent === "已更新文字"
+      && window.progress.at(-1)?.pageUrl.endsWith("/new-repository"));
+    await page.evaluate(() => window.send("SET_DISPLAY_MODE", { mode: "original" }));
+    assert.equal(await page.locator("#spa").textContent(), "Updated text");
+    console.log("PASS: original elements/Text nodes, trusted clicks, grid/fonts/icons, 3 modes, filtering, viewport deferral, duplicate coalescing, dynamic updates, href reuse, cancellation, long text splitting and SPA");
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

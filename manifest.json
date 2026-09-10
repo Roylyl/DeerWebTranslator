@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "DeerWebTranslator",
   "version": "1.0.0",
-  "description": "像 Chrome 原生翻译一样快速，为网页提供 AI 双语阅读，支持多种模型与 API。",
+  "description": "保留网页原有元素和交互，按需翻译可见文本，支持多种 AI API 与双语阅读。",
   "permissions": [
     "storage",
     "activeTab",

@@ -8,8 +8,8 @@
   const EXTENSION_NAME = "DeerWebTranslator";
   const DEFAULT_MODEL = "deepseek-v4-flash";
   const STORAGE_KEY = "deerwebtranslatorSettings";
-  // v5 includes semantic element context and agent KEEP/TRANSLATE decisions.
-  const CACHE_PREFIX = "deerwebtranslator.cache.v5|";
+  // v6 uses fixed text slots and fingerprints prompt/glossary/context.
+  const CACHE_PREFIX = "deerwebtranslator.cache.v6|";
   // Keep this public class stable for page integrations and backwards
   // compatibility with the original project specification.
   const TRANSLATION_CLASS = "deeptranslate-translation";
@@ -194,10 +194,10 @@
 
   // Keep requests small enough to get the first visible replacement quickly,
   // while allowing several independent batches to run in parallel.
-  const MAX_BATCH_CHARS = 9000;
+  const MAX_BATCH_CHARS = 5000;
   const MAX_BATCH_ITEMS = 24;
   const MAX_BATCH_INPUT_CHARS = 14000;
-  const MAX_CONCURRENT_BATCHES = 4;
+  const MAX_CONCURRENT_BATCHES = 3;
   const API_TIMEOUT_MS = 30000;
   const MAX_API_ATTEMPTS = 3;
   const MAX_SYSTEM_PROMPT_CHARS = 6000;
