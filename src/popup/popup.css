@@ -236,6 +236,13 @@ h2 {
   color: #3730a3;
 }
 
+.retry-button { width: 100%; margin-top: 8px; }
+.site-preference { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 12px; }
+.site-preference select { flex: 1; min-width: 0; padding: 6px; border: 1px solid #94a3b8; border-radius: 6px; font: inherit; color: inherit; background: transparent; }
+.usage-details { margin-top: 12px; font-size: 12px; color: #64748b; }
+.usage-details summary { cursor: pointer; }
+[hidden] { display: none !important; }
+
 @media (prefers-color-scheme: dark) {
   :root,
   body {

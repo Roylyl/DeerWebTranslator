@@ -22,9 +22,13 @@
   const toggleKeyButton = document.getElementById("toggle-key");
   const resetButton = document.getElementById("reset-button");
   const saveStatus = document.getElementById("save-status");
+  const testButton = document.getElementById("test-button");
+  const clearCacheButton = document.getElementById("clear-cache-button");
+  const cacheInfo = document.getElementById("cache-info");
 
   let savedSettings = {};
   let keyDrafts = {};
+  let providerDrafts = {};
   let previousProviderId = "deepseek";
 
   function showStatus(message, isError = false) {
@@ -103,6 +107,7 @@
   function fillForm(settings) {
     const publicSettings = DT.normalizePublicSettings(settings);
     keyDrafts = readKeyMap(settings);
+    providerDrafts = {};
     fields.provider.value = publicSettings.provider;
     fields.baseUrl.value = publicSettings.baseUrl;
     fields.targetLanguage.value = publicSettings.targetLanguage;
@@ -121,8 +126,8 @@
     fillForm(savedSettings);
   }
 
-  function syncCurrentKeyDraft() {
-    keyDrafts[fields.provider.value] = fields.apiKey.value.trim();
+  function syncCurrentKeyDraft(providerId = fields.provider.value) {
+    keyDrafts[providerId] = fields.apiKey.value.trim();
   }
 
   function readFormSettings() {
@@ -150,8 +155,8 @@
     } catch (error) {
       throw new Error("API Base URL 不是有效的 URL。");
     }
-    if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password) {
-      throw new Error("API Base URL 只支持 http/https，且不能包含用户名或密码。");
+    if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+      throw new Error("API Base URL 只支持 http/https，不能包含用户名、密码、查询参数或片段。");
     }
     return `${parsed.protocol}//${parsed.host}/*`;
   }
@@ -168,10 +173,10 @@
   }
 
   async function requestEndpointPermission(provider, baseUrl) {
+    const origin = createOriginPattern(baseUrl);
     if (isBuiltInOrigin(provider, baseUrl)) {
       return true;
     }
-    const origin = createOriginPattern(baseUrl);
     if (!chrome.permissions || typeof chrome.permissions.request !== "function") {
       return true;
     }
@@ -204,21 +209,28 @@
   }
 
   function resetNonSecretSettings() {
+    syncCurrentKeyDraft();
     const defaults = DT.normalizePublicSettings({ displayMode: savedSettings.displayMode });
     fillForm({ ...defaults, apiKeys: keyDrafts });
     showStatus("已恢复默认翻译设置；所有供应商 API Key 尚未改变。");
   }
 
   fields.provider.addEventListener("change", () => {
-    syncCurrentKeyDraft();
+    // A change event already exposes the NEW select value. The visible key
+    // and endpoint still belong to the previous provider until this handler.
+    syncCurrentKeyDraft(previousProviderId);
+    providerDrafts[previousProviderId] = {
+      baseUrl: fields.baseUrl.value,
+      model: fields.modelPreset.value === "__custom__" ? fields.customModel.value : fields.modelPreset.value
+    };
     const newProviderId = fields.provider.value;
-    const oldProvider = DT.getProvider(previousProviderId);
-    const keepEndpoint = fields.baseUrl.value.trim() !== oldProvider.baseUrl;
     const selectedProvider = DT.getProvider(newProviderId);
-    if (!keepEndpoint) {
-      fields.baseUrl.value = selectedProvider.baseUrl;
-    }
-    updateProviderFields(newProviderId, selectedProvider.defaultModel, true);
+    const draft = providerDrafts[newProviderId];
+    fields.baseUrl.value = draft?.baseUrl ?? selectedProvider.baseUrl;
+    updateProviderFields(newProviderId, draft?.model || selectedProvider.defaultModel, true);
+    fields.apiKey.type = "password";
+    toggleKeyButton.textContent = "显示";
+    toggleKeyButton.setAttribute("aria-label", "显示 API Key");
     previousProviderId = newProviderId;
   });
   fields.modelPreset.addEventListener("change", () => {
@@ -236,9 +248,35 @@
   });
   form.addEventListener("submit", saveSettings);
   resetButton.addEventListener("click", resetNonSecretSettings);
+  testButton.addEventListener("click", async () => {
+    testButton.disabled = true;
+    showStatus("正在测试已保存的供应商和模型…");
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "DEERWEBTRANSLATOR_TEST_CONNECTION" });
+      showStatus(response?.ok ? "连接正常，模型已返回有效翻译。"
+        : response?.error?.message || "连接测试失败。", !response?.ok);
+    } catch { showStatus("无法连接后台，请重新加载扩展。", true); }
+    finally { testButton.disabled = false; }
+  });
+  async function refreshCache() {
+    const result = await chrome.runtime.sendMessage({ type: "DEERWEBTRANSLATOR_CACHE_INFO" });
+    cacheInfo.textContent = result?.ok ? result.entries + " 条缓存"
+      + (result.bytes == null ? "" : "，约 " + (result.bytes / 1024 / 1024).toFixed(2) + " MB") : "暂时无法读取缓存。";
+  }
+  clearCacheButton.addEventListener("click", async () => {
+    clearCacheButton.disabled = true;
+    try {
+      const result = await chrome.runtime.sendMessage({ type: "DEERWEBTRANSLATOR_CLEAR_CACHE" });
+      showStatus(result?.ok ? "已清除 " + result.entries + " 条翻译缓存，设置和 Key 已保留。"
+        : result?.error?.message || "清除缓存失败。", !result?.ok);
+      await refreshCache();
+    } catch { showStatus("无法连接后台。", true); }
+    finally { clearCacheButton.disabled = false; }
+  });
 
   populateProviderSelect();
   loadSettings().catch((error) => {
     showStatus(error && error.message ? `读取设置失败：${error.message}` : "读取设置失败。", true);
   });
+  refreshCache().catch(() => { cacheInfo.textContent = "暂时无法读取缓存。"; });
 })(globalThis);

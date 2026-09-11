@@ -104,20 +104,28 @@
           <div class="field-group">
             <label for="glossary">自定义术语表</label>
             <textarea id="glossary" name="glossary" rows="6" placeholder="示例：\nfirmware = 固件\nlatency = 延迟" spellcheck="false"></textarea>
-            <p class="field-help">每行一个术语映射；可使用“原文 = 译文”格式。</p>
+            <p class="field-help">每行一个“原文 = 译文”映射，只发送当前文本命中的条目以节省 token；自由格式规则会完整保留。</p>
           </div>
         </section>
 
         <div class="form-actions">
           <button id="reset-button" class="button button-secondary" type="button">恢复默认（保留所有 Key）</button>
+          <button id="test-button" class="button button-secondary" type="button">测试已保存的连接</button>
           <button class="button button-primary" type="submit">保存设置</button>
         </div>
         <p id="save-status" class="save-status" role="status" aria-live="polite"></p>
+        <p class="field-help">连接测试会向当前已保存的模型发送一条简短测试文本，可能消耗少量 API 额度；不会发送正在浏览的网页内容。</p>
       </form>
+
+      <section class="settings-card">
+        <div class="card-heading"><div><h2>本地翻译缓存</h2><p id="cache-info">读取缓存信息…</p></div></div>
+        <button id="clear-cache-button" class="button button-secondary" type="button">清除翻译缓存（保留设置和 Key）</button>
+        <p class="field-help">会清除各版本的扩展翻译缓存，无法撤销；下次访问可能需要重新翻译。</p>
+      </section>
 
       <section class="security-note">
         <h2>隐私与安全</h2>
-        <p>API Key 只由 Options 页面保存、由后台 service worker 读取。content script 不读取 Key，网页脚本也无法访问扩展隔离世界中的 Key。网页正文会发送到你选择的模型供应商，请不要翻译机密信息。</p>
+        <p>API Key 保存在本地扩展存储，仅可信扩展页面和后台可访问；弹窗只保留是否已配置的状态，后台用于请求鉴权。content script 不读取 Key，网页脚本也不会收到 Key。网页正文会发送到你选择的模型供应商，请不要翻译机密信息。</p>
       </section>
     </main>
     <script src="../shared/constants.js"></script>

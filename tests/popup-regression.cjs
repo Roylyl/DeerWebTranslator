@@ -23,6 +23,7 @@ const executablePath = process.env.CHROME_BIN || (process.platform === "darwin"
       const handlers = [];
       window.config = { provider: "ollama", model: "local-model", displayMode: "bilingual",
         apiKeys: { other: "fixture-only" }, glossary: "Preserve glossary" };
+      window.sites = {};
       window.hasReceiver = options.receiver !== false;
       window.pageState = { status: "idle", mode: "translation", total: 0, completed: 0, autoTranslate: false };
       window.chrome = {
@@ -40,7 +41,7 @@ const executablePath = process.env.CHROME_BIN || (process.platform === "darwin"
             if (!window.hasReceiver) return Promise.reject(new Error("Could not establish connection. Receiving end does not exist."));
             if (message.type === "DEERWEBTRANSLATOR_START_TRANSLATION") {
               window.lastStart = message;
-              window.pageState = { ...window.pageState, status: "completed", mode: "translation", total: 4, completed: 4, autoTranslate: true };
+              window.pageState = { ...window.pageState, status: "completed", mode: message.settings.displayMode, total: 4, completed: 4, autoTranslate: true };
             }
             if (message.type === "DEERWEBTRANSLATOR_STOP_TRANSLATION") {
               window.pageState = { ...window.pageState, status: "stopped", autoTranslate: false };
@@ -53,9 +54,14 @@ const executablePath = process.env.CHROME_BIN || (process.platform === "darwin"
           get() {
             calls.push("storage");
             return options.delayConfig ? new Promise((resolve) => { window.resolveConfig = resolve; })
-              : Promise.resolve({ deerwebtranslatorSettings: window.config });
+              : Promise.resolve({ deerwebtranslatorSettings: window.config, deerwebtranslatorSitePreferences: window.sites });
           },
-          set(value) { calls.push("save"); window.config = value.deerwebtranslatorSettings; return Promise.resolve(); }
+          set(value) {
+            calls.push("save");
+            if (value.deerwebtranslatorSettings) window.config = value.deerwebtranslatorSettings;
+            if (value.deerwebtranslatorSitePreferences) window.sites = value.deerwebtranslatorSitePreferences;
+            return Promise.resolve();
+          }
         }, onChanged: { addListener() {} } },
         scripting: {
           insertCSS() { calls.push("css"); return Promise.resolve(); },
@@ -120,8 +126,8 @@ const executablePath = process.env.CHROME_BIN || (process.platform === "darwin"
     await page.waitForFunction(() => window.lastStart);
     await page.evaluate(() => resolveProbe({ ok: true, state: { status: "idle", mode: "original", total: 0 } }));
     await page.waitForTimeout(50);
-    assert.equal(await page.locator("#status-label").textContent(), "已完成");
-    assert.equal(await page.locator('[data-mode="translation"]').getAttribute("aria-pressed"), "true");
+    assert.equal(await page.locator("#status-label").textContent(), "当前区域已翻译");
+    assert.equal(await page.locator('[data-mode="bilingual"]').getAttribute("aria-pressed"), "true");
     assert.equal(await page.evaluate(() => calls.includes("inject")), false);
     await page.close();
 
@@ -146,7 +152,26 @@ const executablePath = process.env.CHROME_BIN || (process.platform === "darwin"
     assert.equal(await page.locator("#translate-button").isDisabled(), true);
     assert.equal(await page.evaluate(() => calls.some((c) => c.includes("DEERWEBTRANSLATOR"))), false);
     await page.close();
+
+    page = await open();
+    await page.locator("#site-policy").selectOption("always");
+    await page.waitForFunction(() => sites["https://example.test"]?.auto === "always" && window.lastStart);
+    await page.locator('[data-mode="bilingual"]').click();
+    await page.waitForFunction(() => sites["https://example.test"].mode === "bilingual");
+    await page.locator('[data-mode="original"]').click();
+    await page.waitForFunction(() => config.displayMode === "original");
+    assert.equal(await page.evaluate(() => sites["https://example.test"].mode), "bilingual", "viewing original does not erase preferred reading mode");
+    await page.locator("#site-policy").selectOption("never");
+    await page.waitForFunction(() => pageState.status === "stopped");
+    assert.equal(await page.evaluate(() => config.apiKeys.other), "fixture-only");
+    await page.evaluate(() => progress({ status: "partial", failed: 2, usage: { requests: 2, reportedRequests: 1,
+      inputTokens: 15, outputTokens: 5, cacheReadTokens: 4 } }));
+    assert.equal(await page.locator("#retry-button").isEnabled(), true);
+    await page.locator("#retry-button").click();
+    assert((await page.evaluate(() => calls)).includes("DEERWEBTRANSLATOR_RETRY_FAILED"));
+    assert((await page.locator("#usage-label").textContent()).includes("部分请求未报告用量"));
+    await page.close();
     assert.deepEqual(failures, []);
-    console.log("PASS: parallel initialization, interactive pending state, fixed width, no startup injection, one-read early action, lazy injection, stale-probe guard, authoritative progress, mode persistence and restricted pages");
+    console.log("PASS: parallel initialization, interactive pending state, fixed width, no startup injection, one-read early action, lazy injection, stale-probe guard, authoritative progress, site/mode persistence, retry controls, usage labels and restricted pages");
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

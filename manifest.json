@@ -6,6 +6,7 @@
   "permissions": [
     "storage",
     "activeTab",
+    "contextMenus",
     "scripting"
   ],
   "host_permissions": [
@@ -48,6 +49,7 @@
       "js": [
         "src/shared/constants.js",
         "src/shared/dom-codec.js",
+        "src/content/text-index.js",
         "src/content/content-script.js"
       ],
       "css": [
@@ -62,5 +64,11 @@
   "optional_host_permissions": [
     "http://*/*",
     "https://*/*"
-  ]
+  ],
+  "commands": {
+    "toggle-translation": {
+      "suggested_key": { "default": "Alt+Shift+T" },
+      "description": "切换原文与译文／开始翻译"
+    }
+  }
 }

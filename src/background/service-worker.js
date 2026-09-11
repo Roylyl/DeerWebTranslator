@@ -9,6 +9,9 @@ importScripts("translation-policy.js");
   const activeRequests = new Map();
   const cancelledRuns = new Map();
   const inFlight = new Map();
+  const providerPools = new Map();
+  const capabilities = new Map();
+  const cacheVersions = new Map();
   // Keys are only available to extension pages and the service worker.
   const storageReady = chrome.storage.local.setAccessLevel
     ? chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" })
@@ -130,9 +133,10 @@ importScripts("translation-policy.js");
         tag: String(item.context.tag || "").slice(0, 24),
         region: String(item.context.region || "").slice(0, 32),
         isLink: Boolean(item.context.isLink),
-        linkKind: String(item.context.linkKind || "").slice(0, 24)
+        linkKind: String(item.context.linkKind || "").slice(0, 24),
+        heading: String(item.context.heading || "").slice(0, 96)
       } : {};
-      return { id, text, hash, context };
+      return { id, text, hash, context, force: item.force === true };
     });
 
     if (totalCharacters > DT.MAX_BATCH_INPUT_CHARS) {
@@ -158,8 +162,8 @@ importScripts("translation-policy.js");
     } catch (error) {
       throw new DeerWebTranslatorError("ENDPOINT_INVALID", "API Base URL 不是有效的 URL。" );
     }
-    if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password) {
-      throw new DeerWebTranslatorError("ENDPOINT_INVALID", "API Base URL 只支持 http/https，且不能包含用户名或密码。" );
+    if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+      throw new DeerWebTranslatorError("ENDPOINT_INVALID", "API Base URL 只支持 http/https，不能包含用户名、密码、查询参数或片段。" );
     }
     return value;
   }
@@ -193,7 +197,7 @@ importScripts("translation-policy.js");
       JSON.stringify({
         page: pageContext,
         items: items.map((item) => ({ id: item.id, text: item.text,
-          context: { tag: item.context?.tag, region: item.context?.region } }))
+          context: { tag: item.context?.tag, region: item.context?.region, heading: item.context?.heading || undefined } }))
       })
     ].join("\n");
   }
@@ -201,7 +205,7 @@ importScripts("translation-policy.js");
   function buildProviderRequest(settings, apiKey, items, pageContext, useJsonMode, useTemperature, correction) {
     const provider = DT.getProvider(settings.provider);
     const baseUrl = normalizeBaseUrl(settings);
-    const systemPrompt = createTranslationSystemPrompt(settings, correction);
+    const systemPrompt = createTranslationSystemPrompt({ ...settings, glossary: relevantGlossary(items, settings.glossary) }, correction);
     const userMessage = createUserMessage(items, pageContext);
 
     if (provider.kind === "anthropic") {
@@ -423,98 +427,126 @@ importScripts("translation-policy.js");
     return new DeerWebTranslatorError("API_ERROR", `${providerLabel} API 请求失败（HTTP ${status}）。`, false);
   }
 
-  async function callProvider(items, settings, apiKey, runId, pageContext) {
-    const provider = DT.getProvider(settings.provider);
-    let attempt = 0;
-    let useJsonMode = provider.kind !== "anthropic";
-    let useTemperature = true;
-    let correction = "";
 
-    while (attempt < DT.MAX_API_ATTEMPTS) {
-      if (isCancelled(runId)) {
-        throw new DeerWebTranslatorError("CANCELLED", "翻译已停止。" );
-      }
-      attempt += 1;
-      const request = buildProviderRequest(settings, apiKey, items, pageContext, useJsonMode, useTemperature, correction);
+  function relevantGlossary(items, glossary) {
+    const text = items.map((item) => item.text + " " + (item.context?.heading || "")).join(" ").toLowerCase();
+    return String(glossary || "").split("\n").filter((line) => {
+      const match = line.match(/^\s*(.+?)\s*(?:=|=>|→)\s*(.+)$/);
+      return !match || text.includes(match[1].trim().toLowerCase());
+    }).join("\n");
+  }
+  function newUsage() { return { requests: 0, reportedRequests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }; }
+  function countUsage(stats, body, kind) {
+    const usage = kind === "gemini" ? body?.usageMetadata : body?.usage;
+    if (!usage) return;
+    const input = usage.prompt_tokens ?? usage.input_tokens ?? usage.promptTokenCount;
+    const output = usage.completion_tokens ?? usage.output_tokens ?? usage.candidatesTokenCount;
+    if (!Number.isFinite(input) || !Number.isFinite(output)) return;
+    stats.reportedRequests++;
+    stats.inputTokens += input + (kind === "anthropic"
+      ? (Number(usage.cache_read_input_tokens) || 0) + (Number(usage.cache_creation_input_tokens) || 0) : 0);
+    stats.outputTokens += output + (kind === "gemini" ? Number(usage.thoughtsTokenCount) || 0 : 0);
+    stats.cacheReadTokens += Number(usage.prompt_cache_hit_tokens ?? usage.cache_read_input_tokens
+      ?? usage.prompt_tokens_details?.cached_tokens ?? usage.cachedContentTokenCount) || 0;
+  }
+  async function acquire(pool, runId) {
+    while (pool.active >= pool.limit || Date.now() < pool.until) {
+      await delay(Math.min(250, Math.max(25, pool.until - Date.now())), runId);
+    }
+    if (isCancelled(runId)) throw new DeerWebTranslatorError("CANCELLED", "翻译已停止。");
+    pool.active++;
+  }
+  async function callProvider(items, settings, apiKey, runId, pageContext, usage, onValid = async () => {}, attemptLimit = DT.MAX_API_ATTEMPTS) {
+    const provider = DT.getProvider(settings.provider);
+    const poolKey = settings.provider + "|" + settings.baseUrl + "|" + settings.model;
+    if (!providerPools.has(poolKey)) providerPools.set(poolKey, { active: 0, limit: 3, until: 0, successes: 0 });
+    const pool = providerPools.get(poolKey);
+    const cap = capabilities.get(poolKey) || {};
+    let useJsonMode = provider.kind !== "anthropic" && cap.json !== false;
+    let useTemperature = cap.temperature !== false;
+    let pending = [...items], attempt = 0, correction = "";
+    const accepted = new Map();
+    let lastError = new DeerWebTranslatorError("INVALID_RESPONSE", "模型未返回有效译文。", true);
+    while (pending.length && attempt < attemptLimit) {
+      if (isCancelled(runId)) throw new DeerWebTranslatorError("CANCELLED", "翻译已停止。");
+      await acquire(pool, runId);
+      attempt++;
+      let request, response, responseText = "", apiResponse, timedOut = false;
       const controller = new AbortController();
       registerRequest(runId, controller);
-      let timedOut = false;
-      const timeout = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-      }, DT.API_TIMEOUT_MS);
-
-      let response, responseText = "", apiResponse;
+      const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, DT.API_TIMEOUT_MS);
       try {
-        response = await fetch(request.url, {
-          method: "POST",
-          headers: request.headers,
-          body: JSON.stringify(request.body),
-          signal: controller.signal
-        });
-        // Headers can arrive immediately while the model is still generating.
-        // Keep the deadline and cancellation active until the body is read.
-        if (response.ok) apiResponse = await response.json();
-        else responseText = await response.text();
+        request = buildProviderRequest(settings, apiKey, pending, pageContext, useJsonMode, useTemperature, correction);
+        usage.requests++;
+        response = await fetch(request.url, { method: "POST", headers: request.headers,
+          body: JSON.stringify(request.body), signal: controller.signal });
+        if (response.ok) {
+          apiResponse = await response.json();
+          countUsage(usage, apiResponse, provider.kind);
+        } else responseText = await response.text();
       } catch (error) {
-        if (isCancelled(runId)) {
-          throw new DeerWebTranslatorError("CANCELLED", "翻译已停止。" );
-        }
-        if (attempt < DT.MAX_API_ATTEMPTS) {
-          await delay(timedOut ? 1000 * attempt : Math.min(1500 * attempt, 6000), runId);
-          continue;
-        }
-        throw new DeerWebTranslatorError(
-          timedOut ? "TIMEOUT" : "NETWORK_ERROR",
-          timedOut ? `${provider.label} 请求超时，请稍后重试。` : `无法连接 ${provider.label}，请检查网络或 Endpoint。`,
-          true
-        );
+        lastError = error instanceof DeerWebTranslatorError ? error : new DeerWebTranslatorError(
+          timedOut ? "TIMEOUT" : error instanceof SyntaxError ? "INVALID_RESPONSE" : "NETWORK_ERROR",
+          timedOut ? "模型响应超时，可重试未完成部分。" : "模型连接或响应异常，可重试未完成部分。", true);
+        response = null;
       } finally {
-        clearTimeout(timeout);
-        unregisterRequest(runId, controller);
+        clearTimeout(timeout); unregisterRequest(runId, controller); pool.active--;
       }
-
+      if (isCancelled(runId)) throw new DeerWebTranslatorError("CANCELLED", "翻译已停止。");
+      if (!response) {
+        if (!lastError.retryable) break;
+        if (attempt < attemptLimit) await delay(500 * attempt, runId);
+        continue;
+      }
       if (!response.ok) {
         if (request.supportsJsonMode && useJsonMode && isFormatOptionError(response.status, responseText)) {
-          useJsonMode = false;
-          attempt -= 1;
-          continue;
+          useJsonMode = false; cap.json = false; capabilities.set(poolKey, cap); attempt--; continue;
         }
         if (request.supportsTemperature && useTemperature && isTemperatureOptionError(response.status, responseText)) {
-          useTemperature = false;
-          attempt -= 1;
-          continue;
+          useTemperature = false; cap.temperature = false; capabilities.set(poolKey, cap); attempt--; continue;
         }
-        const statusError = errorForHttpStatus(response.status, provider.label);
-        if (shouldRetryStatus(response.status) && attempt < DT.MAX_API_ATTEMPTS) {
-          await delay(getRetryDelay(response, attempt), runId);
-          continue;
+        lastError = errorForHttpStatus(response.status, provider.label);
+        if (response.status === 429) {
+          pool.limit = Math.max(1, pool.limit - 1); pool.successes = 0;
+          pool.until = Math.max(pool.until, Date.now() + getRetryDelay(response, attempt));
         }
-        throw statusError;
+        if (!shouldRetryStatus(response.status)) break;
+        if (attempt < attemptLimit) await delay(getRetryDelay(response, attempt), runId);
+        continue;
       }
-
       try {
-        const content = extractProviderContent(provider, apiResponse);
-        return validateTranslations(parseStrictJson(content), items);
+        const result = parseStrictJson(extractProviderContent(provider, apiResponse));
+        if (!result || Object.keys(result).length !== 1 || !Array.isArray(result.translations)) {
+          throw new DeerWebTranslatorError("INVALID_RESPONSE", "模型 JSON 结构无效。", true);
+        }
+        const expected = new Set(pending.map((item) => item.id)), seen = new Set(), valid = [];
+        if (result.translations.some((item) => {
+          if (!expected.has(item?.id) || seen.has(item.id)) return true;
+          seen.add(item.id); return false;
+        })) throw new DeerWebTranslatorError("INVALID_RESPONSE", "模型返回未知或重复 ID。", true);
+        for (const item of pending) {
+          const translation = result.translations.find((value) => value.id === item.id);
+          if (!translation) continue;
+          try { valid.push(...validateTranslations({ translations: [translation] }, [item])); }
+          catch (error) { lastError = error; }
+        }
+        // Successfully validated paragraphs are saved/displayed once and
+        // excluded from all subsequent format retries.
+        await onValid(valid);
+        valid.forEach((item) => accepted.set(item.id, item));
+        pending = pending.filter((item) => !accepted.has(item.id));
+        if (++pool.successes >= 8) { pool.limit = Math.min(3, pool.limit + 1); pool.successes = 0; }
       } catch (error) {
-        if (isCancelled(runId)) {
-          throw new DeerWebTranslatorError("CANCELLED", "翻译已停止。" );
-        }
-        // response.json() can throw a native SyntaxError. Treat it like the
-        // provider-specific validation errors so a transient malformed answer
-        // gets another chance with a stricter correction message.
-        if (attempt < DT.MAX_API_ATTEMPTS) {
-          correction = "Return no Markdown fences or commentary. Return exactly one JSON object, with every input ID exactly once and only the fields id and text.";
-          await delay(500 * attempt, runId);
-          continue;
-        }
-        throw error instanceof DeerWebTranslatorError
-          ? error
+        lastError = error instanceof DeerWebTranslatorError ? error
           : new DeerWebTranslatorError("INVALID_RESPONSE", "模型返回无法处理。", true);
       }
+      if (pending.length && attempt < attemptLimit) {
+        correction = "Retry only these IDs. Preserve every marker and return strict JSON with id and text.";
+        await delay(250 * attempt, runId);
+      }
     }
-
-    throw new DeerWebTranslatorError("API_ERROR", "翻译请求失败，请稍后重试。", true);
+    return { translations: items.filter((item) => accepted.has(item.id)).map((item) => accepted.get(item.id)),
+      failed: pending.map((item) => ({ id: item.id, error: lastError })) };
   }
 
   function cacheKeyFor(item, pageUrl, settings) {
@@ -535,7 +567,7 @@ importScripts("translation-policy.js");
     const missing = [];
     items.forEach((item, index) => {
       const entry = stored[keys[index]];
-      if (entry && typeof entry === "object"
+      if (!item.force && entry && typeof entry === "object"
         && entry.originalHash === item.hash
         && entry.provider === settings.provider
         && entry.model === settings.model
@@ -577,83 +609,110 @@ importScripts("translation-policy.js");
     }
   }
 
+
+  function localLabel(item, settings) {
+    if (item.force || item.context?.region !== "ui" || settings.systemPrompt !== DT.DEFAULT_SYSTEM_PROMPT
+      || relevantGlossary([item], settings.glossary).trim() || !/Simplified|简体/i.test(settings.targetLanguage)) return null;
+    const labels = { Settings: "设置", Search: "搜索", Cancel: "取消", Save: "保存",
+      Close: "关闭", Next: "下一步", Previous: "上一步", Documentation: "文档",
+      Terms: "条款", Privacy: "隐私" };
+    return Object.hasOwn(labels, item.text.trim()) ? labels[item.text.trim()] : null;
+  }
+  function notifyPartial(request, sender, translations, source) {
+    if (!request.batchId || !translations.length || !chrome.tabs?.sendMessage || isCancelled(request.runId)) return;
+    void chrome.tabs.sendMessage(sender.tab.id, { type: "DEERWEBTRANSLATOR_PARTIAL",
+      runId: request.runId, batchId: request.batchId, translations, source },
+      { frameId: sender.frameId || 0 }).catch(() => {});
+  }
   async function translateBatch(message, sender) {
-    if (!sender || !sender.tab || typeof sender.tab.id !== "number") {
-      throw new DeerWebTranslatorError("INVALID_SENDER", "翻译请求必须来自网页内容脚本。" );
+    if (!sender?.tab || typeof sender.tab.id !== "number") {
+      throw new DeerWebTranslatorError("INVALID_SENDER", "翻译请求必须来自网页内容脚本。");
     }
     const request = validateBatchMessage(message);
-    if (isCancelled(request.runId)) {
-      throw new DeerWebTranslatorError("CANCELLED", "翻译已停止。" );
-    }
-
-    const { settings, apiKey } = await getStoredConfig();
-    const provider = DT.getProvider(settings.provider);
-    const pageContext = { title: String(message.pageTitle || "").slice(0, 160) };
+    request.batchId = typeof message.batchId === "string" ? message.batchId.slice(0, 160) : "";
+    if (isCancelled(request.runId)) throw new DeerWebTranslatorError("CANCELLED", "翻译已停止。");
+    const usage = newUsage();
     try {
-      const url = new URL(request.pageUrl);
-      pageContext.site = url.hostname;
-    } catch {}
-    // Compute the key from actual input, not a content-script supplied hash.
-    // Prompt/glossary changes must not silently reuse old translations.
-    await Promise.all(request.items.map(async (item) => {
-      item.hash = await DT.sha256Hex(JSON.stringify([
-        item.text, item.context, pageContext, settings.domain, settings.systemPrompt, settings.glossary
-      ]));
-    }));
-    const cache = await readCache(request.items, request.pageUrl, settings);
-    if (cache.missing.length === 0) {
-      return {
-        translations: cache.cached,
-        cachedCount: cache.cached.length,
-        requestedCount: request.items.length
-      };
-    }
-    if (provider.requiresApiKey && !apiKey) {
-      throw new DeerWebTranslatorError("API_KEY_MISSING", `尚未设置 ${provider.label} API Key，请先打开设置。` );
-    }
-
-    const owned = [], waiting = [];
-    for (const item of cache.missing) {
-      // Share work only within the same tab/run: stopping one tab cannot abort another.
-      const key = sender.tab.id + "|" + request.runId + "|" + cacheKeyFor(item, request.pageUrl, settings);
-      let job = inFlight.get(key);
-      if (!job) {
-        let resolve, reject;
-        const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
-        job = { promise, resolve, reject, item, key };
-        inFlight.set(key, job);
-        owned.push(job);
+      const { settings, apiKey } = await getStoredConfig();
+      const provider = DT.getProvider(settings.provider);
+      const pageContext = { title: String(message.pageTitle || "").slice(0, 160) };
+      try { pageContext.site = new URL(request.pageUrl).hostname; } catch {}
+      await Promise.all(request.items.map(async (item) => {
+        item.hash = await DT.sha256Hex(JSON.stringify([item.text, item.context, pageContext,
+          settings.domain, settings.systemPrompt, relevantGlossary([item], settings.glossary)]));
+      }));
+      const cache = await readCache(request.items, request.pageUrl, settings);
+      // Notify before any network wait, key error or in-flight joining.
+      notifyPartial(request, sender, cache.cached, "cache");
+      const local = [], missing = [];
+      for (const item of cache.missing) {
+        const text = localLabel(item, settings);
+        if (text !== null) local.push({ id: item.id, text });
+        else missing.push(item);
       }
-      waiting.push(job.promise.then((text) => ({ id: item.id, text })));
-    }
-    // Attach rejection handlers before launching provider work.
-    const allResults = Promise.all(waiting);
-    allResults.catch(() => {});
-    if (owned.length) {
-      try {
-        const originals = owned.map((job) => job.item);
-        // Short wire IDs reduce repeated protocol overhead; local IDs stay exact.
-        const wire = originals.map((item, index) => ({ ...item, id: String(index) }));
-        const protectedBatch = global.DeerTranslationPolicy.protect(wire);
-        const translated = await callProvider(protectedBatch.items, settings, apiKey, request.runId, pageContext);
-        const restored = global.DeerTranslationPolicy.restore(translated, protectedBatch.maps);
-        const fresh = restored.map((item, index) => ({ id: originals[index].id, text: item.text }));
-        if (isCancelled(request.runId)) throw new DeerWebTranslatorError("CANCELLED", "翻译已停止。");
-        await writeCache(originals, fresh, request.pageUrl, settings);
-        owned.forEach((job, index) => job.resolve(fresh[index].text));
-      } catch (error) {
-        owned.forEach((job) => job.reject(error));
-      } finally {
-        owned.forEach((job) => inFlight.delete(job.key));
+      notifyPartial(request, sender, local, "local");
+      if (local.length) await writeCache(cache.missing.filter((item) => local.some((t) => t.id === item.id)),
+        local, request.pageUrl, settings);
+      if (missing.length && provider.requiresApiKey && !apiKey) {
+        throw new DeerWebTranslatorError("API_KEY_MISSING", "请先在设置中填写 " + provider.label + " API Key。");
       }
-    }
-    const freshTranslations = await allResults;
-    const translationsById = new Map([...cache.cached, ...freshTranslations].map((translation) => [translation.id, translation.text]));
-    return {
-      translations: request.items.map((item) => ({ id: item.id, text: translationsById.get(item.id) })),
-      cachedCount: cache.cached.length,
-      requestedCount: request.items.length
-    };
+      const owned = [], waiting = [];
+      for (const item of missing) {
+        const cacheKey = cacheKeyFor(item, request.pageUrl, settings);
+        const key = sender.tab.id + "|" + request.runId + "|" + cacheKey + "|" + item.force;
+        let job = inFlight.get(key);
+        if (!job) {
+          let resolve, reject;
+          const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+          const cacheState = cacheVersions.get(cacheKey) || { version: 0, pending: 0 };
+          cacheState.version++; cacheState.pending++; cacheVersions.set(cacheKey, cacheState);
+          job = { promise, resolve, reject, item, key, done: false, cacheKey, cacheState, version: cacheState.version };
+          inFlight.set(key, job); owned.push(job);
+        }
+        waiting.push(job.promise.then((text) => ({ id: item.id, text })));
+      }
+      const allResults = Promise.allSettled(waiting);
+      if (owned.length) {
+        try {
+          const originals = owned.map((job) => job.item);
+          const wire = originals.map((item, i) => ({ ...item, id: String(i) }));
+          const protectedBatch = global.DeerTranslationPolicy.protect(wire);
+          const outcome = await callProvider(protectedBatch.items, settings, apiKey, request.runId, pageContext, usage,
+            async (valid) => {
+              if (isCancelled(request.runId)) throw new DeerWebTranslatorError("CANCELLED", "翻译已停止。");
+              if (!valid.length) return;
+              const restored = global.DeerTranslationPolicy.restore(valid, protectedBatch.maps);
+              const fresh = restored.map((item) => ({ id: originals[Number(item.id)].id, text: item.text }));
+              notifyPartial(request, sender, fresh, "model");
+              // A late pre-retranslation request must not overwrite the newer
+              // forced result in persistent cache, even across tabs.
+              const cacheable = owned.filter((job) => job.version === job.cacheState.version
+                && fresh.some((item) => item.id === job.item.id)).map((job) => job.item);
+              await writeCache(cacheable, fresh, request.pageUrl, settings);
+              for (const item of restored) {
+                const job = owned[Number(item.id)]; job.done = true; job.resolve(item.text);
+              }
+            });
+          outcome.failed.forEach(({ id, error }) => owned[Number(id)].reject(error));
+        } catch (error) {
+          owned.filter((job) => !job.done).forEach((job) => job.reject(error));
+        } finally { owned.forEach((job) => {
+          inFlight.delete(job.key);
+          if (--job.cacheState.pending === 0) cacheVersions.delete(job.cacheKey);
+        }); }
+      }
+      const results = await allResults;
+      const fresh = results.filter((item) => item.status === "fulfilled").map((item) => item.value);
+      const translationsById = new Map([...cache.cached, ...local, ...fresh].map((t) => [t.id, t]));
+      const failed = results.flatMap((result, i) => result.status === "rejected"
+        ? [{ id: missing[i].id, error: serializeError(result.reason) }] : []);
+      if (!translationsById.size && failed.length) {
+        const error = results.find((r) => r.status === "rejected").reason;
+        throw error;
+      }
+      return { translations: request.items.filter((i) => translationsById.has(i.id)).map((i) => translationsById.get(i.id)),
+        failed, cachedCount: cache.cached.length, localCount: local.length, requestedCount: request.items.length, usage };
+    } catch (error) { error.usage = usage; throw error; }
   }
 
   function serializeError(error) {
@@ -676,7 +735,68 @@ importScripts("translation-policy.js");
     }
   }
 
+  const SITE_KEY = "deerwebtranslatorSitePreferences";
+  async function pagePolicy(url) {
+    const { settings } = await getStoredConfig();
+    const stored = await chrome.storage.local.get(SITE_KEY);
+    let policy = {};
+    try { policy = stored[SITE_KEY]?.[new URL(url).origin] || {}; } catch {}
+    return { settings, policy: { auto: ["always", "never"].includes(policy.auto) ? policy.auto : "manual",
+      mode: Object.values(DT.DISPLAY_MODES).includes(policy.mode) ? policy.mode : settings.displayMode } };
+  }
+  function trustedPage(sender) {
+    return Boolean(sender.url && chrome.runtime.getURL
+      && sender.url.startsWith(chrome.runtime.getURL("")));
+  }
+  async function cacheInfo(clear) {
+    await storageReady;
+    const data = await chrome.storage.local.get(null);
+    const keys = Object.keys(data).filter((key) => key.startsWith("deerwebtranslator.cache."));
+    const bytes = chrome.storage.local.getBytesInUse ? await chrome.storage.local.getBytesInUse(keys) : null;
+    if (clear && keys.length) await chrome.storage.local.remove(keys);
+    return { entries: keys.length, bytes };
+  }
+  async function testConnection() {
+    const { settings, apiKey } = await getStoredConfig();
+    const provider = DT.getProvider(settings.provider);
+    if (provider.requiresApiKey && !apiKey) throw new DeerWebTranslatorError("API_KEY_MISSING", "请先保存 API Key。");
+    const usage = newUsage();
+    const result = await callProvider([{ id: "0", text: "Hello", context: { tag: "p", region: "main" } }],
+      { ...settings, systemPrompt: DT.DEFAULT_SYSTEM_PROMPT, glossary: "" }, apiKey,
+      "test-" + Date.now(), { title: "Connection test" }, usage, async () => {}, 1);
+    if (result.failed.length) throw result.failed[0].error;
+    return { usage };
+  }
+  async function runCommand(type, tab) {
+    if (!tab?.id || !/^https?:/.test(tab.url || "")) return;
+    const { settings } = await pagePolicy(tab.url);
+    const message = { type, settings };
+    try { await chrome.tabs.sendMessage(tab.id, message); }
+    catch (error) {
+      if (!/receiving end does not exist|could not establish connection/i.test(error.message)) return;
+      await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ["src/content/content-style.css"] });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id },
+        files: ["src/shared/constants.js", "src/shared/dom-codec.js", "src/content/text-index.js", "src/content/content-script.js"] });
+      await chrome.tabs.sendMessage(tab.id, message);
+    }
+  }
+  function installMenu() {
+    if (!chrome.contextMenus) return;
+    chrome.contextMenus.removeAll(() => {
+      chrome.contextMenus.create({ id: "deer-selection", title: "翻译／重译选中段落", contexts: ["selection"],
+        documentUrlPatterns: ["http://*/*", "https://*/*"] });
+    });
+  }
+  chrome.commands?.onCommand.addListener((name) => {
+    if (name === "toggle-translation") chrome.tabs.query({ active: true, currentWindow: true })
+      .then((tabs) => runCommand("DEERWEBTRANSLATOR_TOGGLE_TRANSLATION", tabs[0])).catch(() => {});
+  });
+  chrome.contextMenus?.onClicked.addListener((info, tab) => {
+    if (info.menuItemId === "deer-selection") runCommand("DEERWEBTRANSLATOR_TRANSLATE_SELECTION", tab).catch(() => {});
+  });
+
   chrome.runtime.onInstalled.addListener(() => {
+    installMenu();
     initializeSettings().catch((error) => console.warn("DeerWebTranslator settings initialization failed", error));
   });
 
@@ -687,6 +807,20 @@ importScripts("translation-policy.js");
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || typeof message.type !== "string") {
       return false;
+    }
+    if (message.type === "DEERWEBTRANSLATOR_PAGE_POLICY" && sender.tab) {
+      pagePolicy(sender.url || sender.tab.url || message.pageUrl)
+        .then((value) => sendResponse({ ok: true, ...value }))
+        .catch(() => sendResponse({ ok: false }));
+      return true;
+    }
+    if (["DEERWEBTRANSLATOR_CACHE_INFO", "DEERWEBTRANSLATOR_CLEAR_CACHE", "DEERWEBTRANSLATOR_TEST_CONNECTION"].includes(message.type)) {
+      if (!trustedPage(sender)) { sendResponse({ ok: false, error: { message: "此操作只允许在扩展设置页执行。" } }); return false; }
+      const operation = message.type === "DEERWEBTRANSLATOR_TEST_CONNECTION" ? testConnection()
+        : cacheInfo(message.type === "DEERWEBTRANSLATOR_CLEAR_CACHE");
+      operation.then((result) => sendResponse({ ok: true, ...result }))
+        .catch((error) => sendResponse({ ok: false, error: serializeError(error) }));
+      return true;
     }
 
     if (message.type === "DEERWEBTRANSLATOR_CANCEL_TRANSLATION") {
@@ -701,7 +835,7 @@ importScripts("translation-policy.js");
 
     translateBatch(message, sender)
       .then((result) => sendResponse({ ok: true, ...result }))
-      .catch((error) => sendResponse({ ok: false, error: serializeError(error) }));
+      .catch((error) => sendResponse({ ok: false, error: serializeError(error), usage: error.usage || newUsage() }));
     return true;
   });
 })(globalThis);

@@ -8,8 +8,8 @@
   const EXTENSION_NAME = "DeerWebTranslator";
   const DEFAULT_MODEL = "deepseek-v4-flash";
   const STORAGE_KEY = "deerwebtranslatorSettings";
-  // v6 uses fixed text slots and fingerprints prompt/glossary/context.
-  const CACHE_PREFIX = "deerwebtranslator.cache.v6|";
+  // v7 fingerprints nearby headings and only the glossary relevant to each item.
+  const CACHE_PREFIX = "deerwebtranslator.cache.v7|";
   // Keep this public class stable for page integrations and backwards
   // compatibility with the original project specification.
   const TRANSLATION_CLASS = "deeptranslate-translation";

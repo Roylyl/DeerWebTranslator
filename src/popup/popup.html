@@ -48,6 +48,21 @@
       </section>
 
       <p id="error-label" class="error-label" role="alert" hidden></p>
+      <button id="retry-button" class="button button-secondary retry-button" type="button" hidden>重试失败部分</button>
+
+      <div class="site-preference">
+        <label for="site-policy">此网站</label>
+        <select id="site-policy" aria-label="此网站的翻译偏好">
+          <option value="manual">手动翻译</option>
+          <option value="always">总是翻译</option>
+          <option value="never">不自动翻译</option>
+        </select>
+      </div>
+      <details class="usage-details">
+        <summary>本页用量与快捷操作</summary>
+        <p id="usage-label" class="detail-label">本轮尚未请求模型。</p>
+        <p class="detail-label">Alt + Shift + T 切换原文／译文；选中文字后可右键重译段落。</p>
+      </details>
 
       <footer class="popup-footer">
         <span id="key-status" class="muted">使用自己的 API Key</span>

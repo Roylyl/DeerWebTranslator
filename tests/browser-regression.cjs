@@ -44,6 +44,7 @@ const executablePath = process.env.CHROME_BIN || (process.platform === "darwin"
         ["documentation", "文档"], ["Please read the", "请阅读"], ["before continuing.", "然后继续。"],
         ["Install with", "安装方式"], ["today.", "现在。"], ["Terms", "条款"], ["Updated text", "已更新文字"]];
       window.chrome = { runtime: {
+        id: "fixture-extension",
         onMessage: { addListener(fn) { handlers.push(fn); } },
         async sendMessage(message) {
           if (message.type === "DEERWEBTRANSLATOR_PROGRESS") window.progress.push(message.state);
@@ -66,7 +67,7 @@ const executablePath = process.env.CHROME_BIN || (process.platform === "darwin"
     }));
     const before = await dimensions();
     await page.addStyleTag({ path: path.join(root, "src/content/content-style.css") });
-    for (const file of ["src/shared/constants.js", "src/shared/dom-codec.js", "src/content/content-script.js"]) {
+    for (const file of ["src/shared/constants.js", "src/shared/dom-codec.js", "src/content/text-index.js", "src/content/content-script.js"]) {
       await page.addScriptTag({ path: path.join(root, file) });
     }
     await page.evaluate(() => window.send("START_TRANSLATION", { settings: { displayMode: "translation" } }));
@@ -159,6 +160,38 @@ const executablePath = process.env.CHROME_BIN || (process.platform === "darwin"
       && window.progress.at(-1)?.pageUrl.endsWith("/new-repository"));
     await page.evaluate(() => window.send("SET_DISPLAY_MODE", { mode: "original" }));
     assert.equal(await page.locator("#spa").textContent(), "Updated text");
-    console.log("PASS: original elements/Text nodes, trusted clicks, grid/fonts/icons, 3 modes, filtering, viewport deferral, duplicate coalescing, dynamic updates, href reuse, cancellation, long text splitting and SPA");
+    await page.evaluate(() => {
+      const section = document.createElement("section"); section.id = "chapter";
+      const heading = document.createElement("h2");
+      heading.append(Object.assign(document.createElement("strong"), { textContent: "Installation" }));
+      section.append(heading); document.body.prepend(section);
+      return send("SET_DISPLAY_MODE", { mode: "translation" });
+    });
+    await page.waitForFunction(() => document.querySelector("#chapter strong").textContent === "安装");
+    await page.evaluate(() => document.querySelector("#chapter").append(Object.assign(document.createElement("p"), { id: "append", textContent: "Updated text" })));
+    await page.waitForFunction(() => document.querySelector("#append").textContent === "已更新文字");
+    assert.equal(await page.evaluate(() => sent.flatMap((batch) => batch.items).find((item) => item.text === "Updated text" && item.context.heading)?.context.heading), "Installation",
+      "nested heading context uses original source, not an earlier translation");
+    await page.evaluate(() => document.querySelector("#append").append(Object.assign(document.createElement("em"), { textContent: " Installation" })));
+    await page.waitForFunction(() => document.querySelector("#append").textContent.includes("安装"));
+    await page.evaluate(() => send("SET_DISPLAY_MODE", { mode: "original" }));
+    assert.equal(await page.locator("#append").textContent(), "Updated text Installation");
+    await page.evaluate(() => send("SET_DISPLAY_MODE", { mode: "translation" }));
+    await page.evaluate(() => document.querySelector("#append").setAttribute("contenteditable", "true"));
+    await page.waitForFunction(() => document.querySelector("#append").textContent === "Updated text Installation");
+
+    // Starting from a selection must not expand to the entire page on mutation.
+    await page.evaluate(() => {
+      const range = document.createRange(); range.selectNodeContents(document.querySelector("#spa"));
+      getSelection().removeAllRanges(); getSelection().addRange(range);
+      return send("STOP_TRANSLATION").then(() => send("TRANSLATE_SELECTION"));
+    });
+    await page.waitForFunction(() => document.querySelector("#spa").textContent === "已更新文字");
+    const scoped = await page.evaluate(() => sent.length);
+    await page.evaluate(() => document.body.prepend(Object.assign(document.createElement("p"), { id: "outside", textContent: "Installation" })));
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator("#outside").textContent(), "Installation");
+    assert.equal(await page.evaluate(() => sent.length), scoped);
+    console.log("PASS: original nodes/clicks/UI, modes, filters, viewport/dedup, dynamic text/inline appends, original heading context, editable protection, cancellation, long text, SPA and scoped selection");
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
