@@ -379,6 +379,21 @@ node tests/extension-smoke.cjs
 
 实际扩展冒烟测试需要支持加载扩展的**完整 Playwright Chromium**，不能使用 headless shell；其浏览器路径可单独通过 `EXTENSION_CHROME_BIN` 指定，不使用 `CHROME_BIN`。该测试采用独立临时浏览器配置，参见 [Playwright 扩展测试说明](https://playwright.dev/docs/chrome-extensions)。
 
+### 仓库维护
+
+提交 `manifest.json`、`src/`、图标源文件、测试与文档；测试依赖、浏览器下载、缓存和测试报告不提交。项目无需构建步骤，若手工打包本地分发文件，请统一放入已忽略的根目录 `dist/`；其他目录的 ZIP 不会因扩展名而被统一忽略。浏览器配置及含 API Key 的存储快照继续保存在仓库外。
+
+按改动范围运行上面的测试，并记录 Node.js、Playwright、浏览器版本与实际执行的脚本，便于复现。提交前检查暂存范围及仓库自身的忽略规则：
+
+```sh
+git status --short
+git diff --check
+git diff --cached --stat
+git -c core.excludesFile=/dev/null check-ignore -v node_modules/check .cache/check test-results/check blob-report/check dist/DeerWebTranslator.zip
+# 正常应无输出：源码、图标和测试不应匹配忽略规则。
+git -c core.excludesFile=/dev/null ls-files --cached --ignored --exclude-standard
+```
+
 ## 反馈与贡献
 
 欢迎提交可复现的问题、网站适配建议和改进。反馈翻译、交互或性能问题时，请尽量提供：
