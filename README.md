@@ -1,12 +1,66 @@
-# DeerWebTranslator
+<p align="center">
+  <img src="icons/icon128.png" width="120" height="120" alt="鹿与地球组成的 DeerWebTranslator 图标">
+</p>
 
-<img src="icons/icon128.png" width="80" height="80" alt="鹿与地球组成的 DeerWebTranslator 图标">
+<h1 align="center">DeerWebTranslator</h1>
 
-使用自己的大模型 API 翻译网页，在原位置阅读译文，随时切回原文或双语对照。
+<p align="center">
+  使用自己的大模型 API 原位翻译网页，并在译文、原文与双语对照之间随时切换。
+</p>
 
-**当前版本：1.0.0** · Chrome Manifest V3 · 原生 HTML / CSS / JavaScript · 无需构建
+<p align="center">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.0.0-2f855a">
+  <img alt="Chrome Manifest" src="https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4?logo=googlechrome&amp;logoColor=white">
+  <a href="https://github.com/Roylyl/DeerWebTranslator/stargazers"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/Roylyl/DeerWebTranslator?style=flat"></a>
+  <a href="https://github.com/Roylyl/DeerWebTranslator/commits/main"><img alt="GitHub Last Commit" src="https://img.shields.io/github/last-commit/Roylyl/DeerWebTranslator"></a>
+  <a href="https://github.com/Roylyl/DeerWebTranslator"><img alt="GitHub Repo Size" src="https://img.shields.io/github/repo-size/Roylyl/DeerWebTranslator"></a>
+  <a href="#参考与许可证"><img alt="License Pending" src="https://img.shields.io/badge/license-pending-orange"></a>
+</p>
 
-## 使用方法
+<p align="center">
+  <a href="https://github.com/Roylyl/DeerWebTranslator/archive/refs/heads/main.zip">下载源码 ZIP</a> ·
+  <a href="#安装与快速开始">安装</a> ·
+  <a href="#功能亮点">功能</a> ·
+  <a href="#隐私与权限">隐私与权限</a> ·
+  <a href="#开发与测试">开发</a>
+</p>
+
+> [!IMPORTANT]
+> 网页正文会发送到你选择的模型供应商，API 调用可能产生费用。不要翻译不适合外发的机密内容，也不要把 API Key、浏览器配置或缓存提交到仓库。当前仓库尚未添加 `LICENSE`；公开可读源码不等于已经授予复制、修改或再分发许可。
+
+## 项目概览
+
+DeerWebTranslator 是一个无需构建的 Chrome Manifest V3 扩展。它按当前阅读范围提取网页可见文本，在后台调用用户配置的模型 API，并尽量保留原有 DOM 元素、链接、事件与排版关系。扩展支持多个云端供应商、本地 Ollama、自定义 OpenAI-compatible 地址、站点级翻译偏好和本地结果缓存。
+
+| 项目 | 当前值 |
+| --- | --- |
+| 扩展版本 | `1.0.0`，以 [manifest.json](manifest.json) 为准 |
+| 技术栈 | 原生 HTML / CSS / JavaScript |
+| 扩展规范 | Chrome Manifest V3 |
+| 构建步骤 | 无；项目根目录可直接作为“已解压的扩展程序”加载 |
+| 浏览器范围 | 面向支持当前 Manifest V3 API 的 Chrome；未声明其他浏览器兼容保证 |
+| 模型服务 | 用户自带 API Key 或本机 Ollama；项目不提供中转服务 |
+| 项目许可证 | 待维护者添加 `LICENSE` |
+
+## 功能亮点
+
+- **原位译文：**更新原文字节点，尽量保留链接、按钮、事件监听器与页面结构。
+- **三种阅读模式：**仅译文、双语和仅原文之间切换，已有结果可复用。
+- **按阅读范围处理：**优先当前视口，滚动、展开内容和 SPA 路由变化后继续增量处理。
+- **多供应商适配：**支持 DeepSeek、OpenAI、OpenRouter、Anthropic、Gemini、Moonshot、SiliconFlow、Ollama 与自定义 OpenAI-compatible 服务。
+- **缓存、去重与局部重试：**减少重复请求，并允许重试失败段落或主动重译选中内容。
+- **严格响应校验：**验证 JSON、项目 ID、文本槽位和网址占位符，模型输出只作为文本处理。
+- **本地设置与站点策略：**按供应商隔离 Key，保存网站自动翻译偏好、显示模式与本地缓存。
+
+## 产品预览
+
+<p align="center">
+  <img src="icons/deer-earth-master.png" width="260" alt="DeerWebTranslator 鹿与地球品牌原图">
+</p>
+
+上图是仓库中的真实品牌原图。当前仓库没有维护可公开复核的弹窗或设置页截图，因此 README 不使用合成界面冒充扩展运行画面；具体 UI 以 [popup](src/popup/popup.html) 与 [options](src/options/options.html) 源码及实际加载结果为准。
+
+## 安装与快速开始
 
 ### 1. 安装扩展
 
@@ -43,7 +97,7 @@
 - **移动目录**：从新目录重新加载扩展。路径变化可能改变开发版扩展 ID，旧设置不一定自动迁移；如需重新配置 Key，请在设置页手动输入。
 - **更新后仍报错**：按[扩展连接失效排查](#扩展连接失效排查)区分旧网页脚本、历史记录和新错误。不要为此把浏览器配置或设置快照复制到仓库。
 
-## 目录
+## 文档导航
 
 - [日常操作](#日常操作)
 - [API 与翻译设置](#api-与翻译设置)
@@ -302,6 +356,23 @@ Chrome 要求内容脚本更新后同时重新加载扩展与宿主网页，参�
 - 固定文字槽位优先保留原节点关系，可能限制跨链接、强调标记等复杂句子的语序重排。
 - 模型可能误译、误判术语或返回无效 JSON；原样返回不保证判断正确。
 - 缓存目前没有自动淘汰机制，需在设置页手动管理。
+
+## 技术信息与项目状态
+
+| 领域 | 当前实现与边界 |
+| --- | --- |
+| 页面侧 | 内容脚本建立增量文本索引，按固定文字槽位替换并恢复内容 |
+| 后台侧 | MV3 Service Worker 负责供应商适配、鉴权、并发、校验与缓存 |
+| UI | 扩展弹窗控制当前页；独立设置页管理供应商、模型、提示词与缓存 |
+| 数据存储 | `chrome.storage.local` 保存设置、各供应商 Key、站点偏好与翻译缓存 |
+| 网络权限 | 内置供应商使用声明的 host permissions；自定义地址按需申请可选权限 |
+| 远程代码 | 扩展页面 CSP 只允许自身脚本；仓库未配置远程 JavaScript |
+| 构建 | 无打包或编译步骤；开发者模式直接加载项目根目录 |
+| 自动化验证 | Node.js 协议／后台测试与 Playwright 浏览器／扩展测试，均使用模拟响应或本机夹具 |
+
+当前仓库以源码形式分发，README 没有声称已经上架 Chrome Web Store，也没有把源码 ZIP 下载量当作 Release 下载量。扩展版本和权限以 [manifest.json](manifest.json) 为准；供应商模型列表是源码内预设，不是实时可用性查询。
+
+自动化测试验证已编码行为，不构成所有网站、浏览器版本、模型、翻译质量、延迟或费用的保证。项目尚未添加许可证，因此在正式开放外部复制、修改与再分发前仍需由维护者明确授权条款。
 
 ## 开发与测试
 
