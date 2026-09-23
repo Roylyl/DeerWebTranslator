@@ -14,7 +14,7 @@
   <a href="https://github.com/Roylyl/DeerWebTranslator/stargazers"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/Roylyl/DeerWebTranslator?style=flat"></a>
   <a href="https://github.com/Roylyl/DeerWebTranslator/commits/main"><img alt="GitHub Last Commit" src="https://img.shields.io/github/last-commit/Roylyl/DeerWebTranslator"></a>
   <a href="https://github.com/Roylyl/DeerWebTranslator"><img alt="GitHub Repo Size" src="https://img.shields.io/github/repo-size/Roylyl/DeerWebTranslator"></a>
-  <a href="#参考与许可证"><img alt="License Pending" src="https://img.shields.io/badge/license-pending-orange"></a>
+  <a href="LICENSE"><img alt="License: GPL-3.0-only" src="https://img.shields.io/badge/license-GPL--3.0--only-2563eb?style=flat-square"></a>
 </p>
 
 <p align="center">
@@ -26,7 +26,7 @@
 </p>
 
 > [!IMPORTANT]
-> 网页正文会发送到你选择的模型供应商，API 调用可能产生费用。不要翻译不适合外发的机密内容，也不要把 API Key、浏览器配置或缓存提交到仓库。当前仓库尚未添加 `LICENSE`；公开可读源码不等于已经授予复制、修改或再分发许可。
+> 网页正文会发送到你选择的模型供应商，API 调用可能产生费用。不要翻译不适合外发的机密内容，也不要把 API Key、浏览器配置或缓存提交到仓库。
 
 ## 项目概览
 
@@ -40,7 +40,7 @@ DeerWebTranslator 是一个无需构建的 Chrome Manifest V3 扩展。它按当
 | 构建步骤 | 无；项目根目录可直接作为“已解压的扩展程序”加载 |
 | 浏览器范围 | 面向支持当前 Manifest V3 API 的 Chrome；未声明其他浏览器兼容保证 |
 | 模型服务 | 用户自带 API Key 或本机 Ollama；项目不提供中转服务 |
-| 项目许可证 | 待维护者添加 `LICENSE` |
+| 项目许可证 | [GPL-3.0-only](LICENSE) |
 
 ## 功能亮点
 
@@ -372,7 +372,7 @@ Chrome 要求内容脚本更新后同时重新加载扩展与宿主网页，参�
 
 当前仓库以源码形式分发，README 没有声称已经上架 Chrome Web Store，也没有把源码 ZIP 下载量当作 Release 下载量。扩展版本和权限以 [manifest.json](manifest.json) 为准；供应商模型列表是源码内预设，不是实时可用性查询。
 
-自动化测试验证已编码行为，不构成所有网站、浏览器版本、模型、翻译质量、延迟或费用的保证。项目尚未添加许可证，因此在正式开放外部复制、修改与再分发前仍需由维护者明确授权条款。
+自动化测试验证已编码行为，不构成所有网站、浏览器版本、模型、翻译质量、延迟或费用的保证。
 
 ## 开发与测试
 
@@ -483,4 +483,4 @@ git -c core.excludesFile=/dev/null ls-files --cached --ignored --exclude-standar
 
 设计参考：[KISS Translator](https://github.com/fishjar/kiss-translator) 的行内内容保护思路，以及 [TWP](https://github.com/FilipePS/Traduzir-paginas-web) 的原文恢复思路。运行时未引入这两个项目的依赖。
 
-**本仓库尚未添加 `LICENSE`，许可证待维护者确定。** 正式开源发布前请补充许可证；本 README 不代替许可证文件。
+本项目原创内容采用 [GNU General Public License v3.0](LICENSE)（`GPL-3.0-only`，仅第 3 版）发布。Copyright © 2026 Roylyl。第三方内容保留各自的版权与许可声明。
